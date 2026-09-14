@@ -11,6 +11,7 @@ import {
 import { getTracks } from '@/services/trackService'
 import { usePlayer } from '@/contexts/PlayerContext'
 import { Button } from '@/components/common/Button'
+import { Modal } from '@/components/common/Modal'
 import { EmptyState, LoadingState } from '@/components/common/StateViews'
 import { useToast } from '@/contexts/ToastContext'
 import { formatDuration } from '@/utils/format'
@@ -26,6 +27,8 @@ export function PlaylistDetailPage() {
   const [tracks, setTracks] = useState<TrackDoc[]>([])
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   async function load() {
     if (!playlistId) return
@@ -92,13 +95,16 @@ export function PlaylistDetailPage() {
 
   async function handleDelete() {
     if (!playlist) return
-    if (!window.confirm(`Delete "${playlist.title}"? This can't be undone.`)) return
+    setDeleting(true)
     try {
       await deletePlaylist(playlist.playlistId)
       notify('Playlist deleted.')
       navigate('/app/playlists')
     } catch {
       notify('Could not delete the playlist.', 'error')
+    } finally {
+      setDeleting(false)
+      setConfirmingDelete(false)
     }
   }
 
@@ -157,11 +163,29 @@ export function PlaylistDetailPage() {
           <Button variant="secondary" onClick={handleAddToQueue} disabled={tracks.length === 0}>
             <ListPlus size={16} /> Queue
           </Button>
-          <Button variant="danger" onClick={() => void handleDelete()}>
+          <Button variant="danger" onClick={() => setConfirmingDelete(true)}>
             <Trash2 size={16} />
           </Button>
         </div>
       </div>
+
+      {confirmingDelete ? (
+        <Modal title="Delete playlist?" onClose={() => setConfirmingDelete(false)}>
+          <div className="flex flex-col gap-4">
+            <p className="text-sm text-ink-1">
+              Delete “{playlist.title}”? This can't be undone.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setConfirmingDelete(false)}>
+                Cancel
+              </Button>
+              <Button variant="danger" onClick={() => void handleDelete()} loading={deleting}>
+                Delete
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
 
       {tracks.length === 0 ? (
         <EmptyState

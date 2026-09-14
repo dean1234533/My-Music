@@ -210,6 +210,25 @@ test('trackService.saveTrack keys the Firestore doc by the video ID itself, and 
 })
 
 // ---------------------------------------------------------------------------
+// updateSettings() writes with merge:true and only ever sends the field(s)
+// actually changed, so a real settings doc can exist with only some fields
+// ever set. getSettings() used to return that partial doc as-is, silently
+// turning any never-written field (e.g. autoplayNext) into `undefined`
+// instead of falling back to its default — the confirmed root cause of
+// "it always plays one at a time and never auto skips" for any account
+// that had only ever touched e.g. the volume setting. getSettings() must
+// merge DEFAULT_SETTINGS underneath whatever the doc actually has.
+// ---------------------------------------------------------------------------
+
+test('settingsService.getSettings merges DEFAULT_SETTINGS under a partial settings doc so an unwritten field (e.g. autoplayNext) falls back to its default instead of becoming undefined', () => {
+  const settingsService = read('src/services/settingsService.ts')
+  assert.match(
+    settingsService,
+    /if \(snap\.exists\(\)\) return \{ uid, \.\.\.DEFAULT_SETTINGS, \.\.\.snap\.data\(\) \} as SettingsDoc/,
+  )
+})
+
+// ---------------------------------------------------------------------------
 // A track saved to a user's independent library (savedTracks) is keyed by
 // `${uid}_${trackId}`, the same pattern favorites already uses — so saving
 // an already-saved YouTube video is a no-op overwrite of the same doc, never
