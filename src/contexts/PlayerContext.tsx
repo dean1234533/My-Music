@@ -303,7 +303,34 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (!container) throw new Error('Player is not ready yet — please try again.')
 
       const YT = await loadYoutubeIframeApi()
-      destroyPlayer()
+
+      // Reuse the existing iframe/player across track changes instead of destroying
+      // and rebuilding it every time. iOS Safari only allows a video inside an
+      // iframe to start playing without a fresh tap if that specific iframe has
+      // already been "unlocked" by a real user gesture — tearing the iframe down
+      // and recreating it for every track meant each auto-advance after a track
+      // ended landed in a brand-new, un-unlocked iframe, so playVideo() silently
+      // did nothing until the user manually pressed play again (user-reported:
+      // "it skips now but does not auto play"). loadVideoById() reuses the same
+      // already-unlocked iframe, so playback continues automatically.
+      if (playerRef.current) {
+        playerRef.current.loadVideoById(track.youtubeVideoId)
+        if (pendingSeekRef.current !== null) {
+          const seekTarget = pendingSeekRef.current
+          pendingSeekRef.current = null
+          playerRef.current.seekTo(seekTarget, true)
+        }
+        if (firebaseUser) void recordPlay(firebaseUser.uid, track.trackId).catch(() => {})
+        return
+      }
+
+      // Tracks whether this specific player-construction promise has already
+      // settled (via onReady). This player instance is reused for every later
+      // track via loadVideoById(), and onError/onStateChange stay bound to it
+      // for its whole lifetime — so an error on some later track must not try
+      // to reject a promise that already resolved long ago; it has to report
+      // the failure itself instead.
+      let settled = false
 
       await new Promise<void>((resolve, reject) => {
         playerRef.current = new YT.Player(container, {
@@ -324,10 +351,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
                 pendingSeekRef.current = null
                 event.target.seekTo(seekTarget, true)
               }
+              settled = true
               resolve()
             },
             onError: (event) => {
               // 2 invalid param, 5 HTML5 error, 100 not found/removed, 101/150 embedding disabled.
+              // This player instance is reused across tracks, so the track that just
+              // failed is whatever is current now — not necessarily the one this
+              // closure was originally created for.
               const code = event.data
               const message =
                 code === 100
@@ -335,11 +366,21 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
                   : code === 101 || code === 150
                     ? 'The owner has disabled embedded playback for this track.'
                     : 'This track could not be played.'
-              if (code === 100 || code === 101 || code === 150) {
-                markUnavailableLocally(track.trackId)
-                void markTrackUnavailable(track.trackId).catch(() => {})
+              const failedTrack = currentTrackRef.current
+              if (failedTrack && (code === 100 || code === 101 || code === 150)) {
+                markUnavailableLocally(failedTrack.trackId)
+                void markTrackUnavailable(failedTrack.trackId).catch(() => {})
               }
-              reject(new Error(message))
+              if (settled) {
+                // A later track failed after the player was already up and running —
+                // the outer try/catch below has long since finished, so report this
+                // failure directly instead of rejecting an already-resolved promise.
+                setIsPlaying(false)
+                stopProgressPolling()
+                notify(message, 'error')
+              } else {
+                reject(new Error(message))
+              }
             },
             onStateChange: (event) => {
               if (event.data === YT.PlayerState.PLAYING) {
@@ -355,8 +396,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
               } else if (event.data === YT.PlayerState.ENDED) {
                 setIsPlaying(false)
                 stopProgressPolling()
+                // Same reused-player caveat as onError: use whatever track is
+                // actually current, not the one this closure was built for.
+                const endedTrack = currentTrackRef.current
                 if (repeatRef.current === 'track') {
-                  void loadAndPlay(track)
+                  if (endedTrack) void loadAndPlay(endedTrack)
                 } else if (autoplayNextRef.current) {
                   stepQueueRef.current(1)
                 }
@@ -374,7 +418,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setIsLoading(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [destroyPlayer, firebaseUser, notify, stopProgressPolling, volume])
+  }, [firebaseUser, notify, stopProgressPolling, volume])
 
   const buildPlayOrder = useCallback((newQueue: TrackDoc[], startTrack: TrackDoc) => {
     if (!shuffle) return newQueue

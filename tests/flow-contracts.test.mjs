@@ -315,6 +315,26 @@ test('queue mutators (addToQueue/removeFromQueue/addPlaylistToQueue/playNext) up
   assert.match(playerContext, /setQueue\(remove\)\s*\n\s*setPlayOrder\(remove\)/)
 })
 
+// ---------------------------------------------------------------------------
+// loadAndPlay used to destroy() and rebuild a brand-new YT.Player (and its
+// iframe) for every track change. iOS Safari only allows a video inside an
+// iframe to start playing without a fresh tap once that specific iframe has
+// been "unlocked" by a real user gesture, so a freshly rebuilt iframe on
+// every auto-advance meant playVideo() silently did nothing after a track
+// ended — the queue would advance to the next track, but never actually
+// play it (user-reported: "it skips now but does not auto play"). Once a
+// player exists, loadAndPlay must reuse it via loadVideoById() instead of
+// destroying and recreating it.
+// ---------------------------------------------------------------------------
+
+test('loadAndPlay reuses the existing player via loadVideoById once one exists, instead of destroying and recreating a new iframe for every track', () => {
+  const playerContext = read('src/contexts/PlayerContext.tsx')
+  assert.match(playerContext, /if \(playerRef\.current\) \{\s*playerRef\.current\.loadVideoById\(track\.youtubeVideoId\)/)
+  // The one remaining `new YT.Player(...)` construction must only run when no player exists yet.
+  const constructorCount = (playerContext.match(/new YT\.Player\(container/g) ?? []).length
+  assert.strictEqual(constructorCount, 1)
+})
+
 test('account deletion and data export both include savedTracks alongside the other owner-scoped collections', () => {
   const deleteAccount = read('functions/src/account/deleteAccount.ts')
   assert.match(deleteAccount, /db\.collection\('savedTracks'\)\.where\('uid', '==', uid\)/)
