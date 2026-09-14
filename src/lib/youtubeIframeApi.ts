@@ -26,6 +26,11 @@ declare global {
       getPlayerState(): number
       loadVideoById(videoId: string): void
       cueVideoById(videoId: string): void
+      /** The video this player is actually cued to/attempting to play — used to correlate an
+       * error event with a specific video, since this one long-lived player is reused across
+       * many tracks (see PlayerContext's loadAndPlay) and the app's own "current track" state
+       * can already have moved on by the time an error for an earlier load actually arrives. */
+      getVideoData(): { video_id: string; author: string; title: string }
       destroy(): void
     }
 

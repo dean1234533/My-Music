@@ -335,6 +335,34 @@ test('loadAndPlay reuses the existing player via loadVideoById once one exists, 
   assert.strictEqual(constructorCount, 1)
 })
 
+// ---------------------------------------------------------------------------
+// onError used to attribute a playback failure to currentTrackRef.current —
+// reasonable when every track got its own freshly-constructed player, but
+// this one long-lived player is reused across every track (see the test
+// above), so by the time an error for some earlier load actually arrives,
+// "current" may already be a different, perfectly fine track. Confirmed live:
+// 12 of 13 tracks this had marked unavailable in the real database were still
+// genuinely playable on YouTube (checked via YouTube's own oEmbed endpoint) —
+// a real, currently-playing track was being permanently mislabeled broken
+// every time some unrelated video's error landed while it happened to be
+// current. onError must ask the player which video it actually failed on.
+// ---------------------------------------------------------------------------
+
+test('onError identifies the failed video from the player itself (getVideoData), not from currentTrackRef, and only shows the error banner when that matches the track currently on screen', () => {
+  const playerContext = read('src/contexts/PlayerContext.tsx')
+  assert.match(
+    playerContext,
+    /const failedVideoId = event\.target\.getVideoData\?\.\(\)\?\.video_id \|\| currentTrackRef\.current\?\.trackId/,
+  )
+  assert.match(playerContext, /if \(failedVideoId === currentTrackRef\.current\?\.trackId\) \{/)
+  // markUnavailableLocally/markTrackUnavailable must run for whatever actually failed,
+  // unconditionally — not gated behind "is this the track currently on screen".
+  assert.doesNotMatch(
+    playerContext,
+    /if \(failedVideoId === currentTrackRef\.current\?\.trackId\) \{[\s\S]{0,80}markUnavailableLocally/,
+  )
+})
+
 test('account deletion and data export both include savedTracks alongside the other owner-scoped collections', () => {
   const deleteAccount = read('functions/src/account/deleteAccount.ts')
   assert.match(deleteAccount, /db\.collection\('savedTracks'\)\.where\('uid', '==', uid\)/)

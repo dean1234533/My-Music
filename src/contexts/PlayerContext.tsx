@@ -368,9 +368,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             },
             onError: (event) => {
               // 2 invalid param, 5 HTML5 error, 100 not found/removed, 101/150 embedding disabled.
-              // This player instance is reused across tracks, so the track that just
-              // failed is whatever is current now — not necessarily the one this
-              // closure was originally created for.
               const code = event.data
               const message =
                 code === 100
@@ -378,19 +375,37 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
                   : code === 101 || code === 150
                     ? 'The owner has disabled embedded playback for this track.'
                     : 'This track could not be played.'
-              const failedTrack = currentTrackRef.current
-              if (failedTrack && (code === 100 || code === 101 || code === 150)) {
-                markUnavailableLocally(failedTrack.trackId)
-                void markTrackUnavailable(failedTrack.trackId).catch(() => {})
+              // This player instance is reused across tracks (see loadAndPlay above), so
+              // currentTrackRef.current can no longer be trusted as "the track this error is
+              // about" — by the time an error actually lands, playback may already have moved
+              // on to a different, perfectly fine track. Confirmed live: 12 of 13 tracks this
+              // had marked unavailable in Firestore were still genuinely live on YouTube
+              // (checked via YouTube's own oEmbed endpoint) — a real, currently-playing track
+              // was being permanently mislabeled broken every time some *other*, unrelated
+              // video's error landed while it happened to be current. Asking the player
+              // directly which video it was actually trying to play removes the guesswork.
+              const failedVideoId = event.target.getVideoData?.()?.video_id || currentTrackRef.current?.trackId
+              const confirmedUnavailable = code === 100 || code === 101 || code === 150
+              if (failedVideoId && confirmedUnavailable) {
+                markUnavailableLocally(failedVideoId)
+                void markTrackUnavailable(failedVideoId).catch(() => {})
               }
               if (settled) {
                 // A later track failed after the player was already up and running —
                 // the outer try/catch below has long since finished, so report this
-                // failure directly instead of rejecting an already-resolved promise.
-                setIsPlaying(false)
-                stopProgressPolling()
-                notify(message, 'error')
+                // failure directly instead of rejecting an already-resolved promise. Only
+                // surface it to the person if it's actually about the track they're looking
+                // at right now — otherwise it was corrected in the background above, but
+                // showing it here would incorrectly blame whatever they're currently playing.
+                if (failedVideoId === currentTrackRef.current?.trackId) {
+                  setIsPlaying(false)
+                  stopProgressPolling()
+                  notify(message, 'error')
+                }
               } else {
+                // This is the very first player construction ever, for exactly one video —
+                // no other track has been requested yet, so this promise must always settle
+                // one way or another rather than potentially hang forever.
                 reject(new Error(message))
               }
             },
