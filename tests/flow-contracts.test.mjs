@@ -251,16 +251,30 @@ test('libraryService.saveToLibrary/removeFromLibrary/isInLibrary all key off the
 // creates that playlist, saving another by the same artist adds to it.
 // Tracks the user doesn't want are removed manually via the normal playlist
 // "remove" button, same as any other playlist — this service only ever adds.
+//
+// The first version of this queried for an existing playlist matching the
+// artist key and created one if the query came back empty — a classic
+// check-then-act race: saving several tracks by the same artist at once
+// (e.g. "Add all to library") ran that check concurrently for all of them,
+// so each one saw "no playlist yet" and created its own. Confirmed live:
+// one real library ended up with 373 auto playlists for only 161 actual
+// artists. The fix uses a deterministic per-artist document ID plus a
+// transaction, so "does it exist" and "create/update it" are atomic against
+// one fixed document no matter how many calls land at once.
 // ---------------------------------------------------------------------------
 
-test('saveToLibrary always calls ensureArtistPlaylist, which matches an existing artist playlist by the normalized autoArtistKey (not by title) so a later rename never causes a duplicate', () => {
+test('ensureArtistPlaylist targets a deterministic per-user-per-artist document ID inside a transaction, so concurrent saves for the same artist can never race into duplicate playlists', () => {
   const libraryService = read('src/services/libraryService.ts')
   assert.match(libraryService, /await ensureArtistPlaylist\(uid, track\)/)
 
   const playlistService = read('src/services/playlistService.ts')
   assert.match(playlistService, /export async function ensureArtistPlaylist\(uid: string, track: TrackDoc\)/)
-  assert.match(playlistService, /where\('ownerId', '==', uid\), where\('autoArtistKey', '==', key\)/)
-  // A brand-new artist playlist must record autoArtistKey so it can be found again by key.
+  // No query-then-create: the target document is derived directly from uid+key.
+  assert.match(playlistService, /function artistPlaylistId\(uid: string, key: string\): string \{\s*return `artist_\$\{uid\}_\$\{key\}`/)
+  assert.match(playlistService, /const ref = playlistRef\(artistPlaylistId\(uid, key\)\)/)
+  assert.match(playlistService, /await runTransaction\(db, async \(tx\) => \{/)
+  assert.match(playlistService, /const snap = await tx\.get\(ref\)/)
+  // A brand-new artist playlist must record autoArtistKey.
   assert.match(playlistService, /autoArtistKey: key,/)
   // Adding a track already in the playlist must not duplicate it.
   assert.match(playlistService, /if \(!data\.trackIds\.includes\(track\.trackId\)\)/)

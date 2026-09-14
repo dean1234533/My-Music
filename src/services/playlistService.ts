@@ -5,10 +5,10 @@ import {
   deleteDoc,
   doc,
   getDoc,
-  getDocs,
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -82,36 +82,47 @@ export async function deletePlaylist(playlistId: string): Promise<void> {
   await deleteDoc(playlistRef(playlistId))
 }
 
+/** Deterministic, so every call for the same user+artist always targets the exact same
+ * document — no query-then-create race is possible (see ensureArtistPlaylist below). */
+function artistPlaylistId(uid: string, key: string): string {
+  return `artist_${uid}_${key}`
+}
+
 /**
  * Every artist gets one always-up-to-date playlist of everything by them in the
  * user's library — saving a track by an artist for the first time creates that
- * playlist, saving another by the same artist adds to it. Matched by
- * `autoArtistKey` (the same normalized grouping key as the Library "Artists"
- * tab, src/utils/artist.ts) rather than by title, so a later manual rename
- * doesn't create a duplicate. Removing a track the user doesn't want stays a
- * manual action via the normal playlist "remove" button — this only ever adds.
+ * playlist, saving another by the same artist adds to it. Matched by a
+ * deterministic ID derived from the normalized artist grouping key
+ * (src/utils/artist.ts) rather than by querying for an existing match, so
+ * saving several tracks by the same artist at once (e.g. "Add all to
+ * library") can never race into creating separate duplicate playlists for
+ * that one artist — confirmed live: a query-then-create version of this did
+ * exactly that, leaving one real artist split across dozens of playlists.
+ * The transaction is what makes "does it exist yet" and "create/update it"
+ * atomic against that one fixed document, even under concurrent calls.
+ * Removing a track the user doesn't want stays a manual action via the
+ * normal playlist "remove" button — this only ever adds.
  */
 export async function ensureArtistPlaylist(uid: string, track: TrackDoc): Promise<void> {
   const key = artistGroupKey(track.artist)
-  const existingSnap = await getDocs(
-    query(collection(db, 'playlists'), where('ownerId', '==', uid), where('autoArtistKey', '==', key)),
-  )
-  if (existingSnap.empty) {
-    const playlistId = newPlaylistId()
-    await setDoc(playlistRef(playlistId), {
-      playlistId,
-      ownerId: uid,
-      title: stripArtistNoise(track.artist) || 'Unknown artist',
-      trackIds: [track.trackId],
-      autoArtistKey: key,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    })
-    return
-  }
-  const existing = existingSnap.docs[0]
-  const data = existing.data() as PlaylistDoc
-  if (!data.trackIds.includes(track.trackId)) {
-    await updateDoc(existing.ref, { trackIds: arrayUnion(track.trackId), updatedAt: serverTimestamp() })
-  }
+  const ref = playlistRef(artistPlaylistId(uid, key))
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref)
+    if (!snap.exists()) {
+      tx.set(ref, {
+        playlistId: ref.id,
+        ownerId: uid,
+        title: stripArtistNoise(track.artist) || 'Unknown artist',
+        trackIds: [track.trackId],
+        autoArtistKey: key,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+      return
+    }
+    const data = snap.data() as PlaylistDoc
+    if (!data.trackIds.includes(track.trackId)) {
+      tx.update(ref, { trackIds: arrayUnion(track.trackId), updatedAt: serverTimestamp() })
+    }
+  })
 }
