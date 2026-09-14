@@ -320,6 +320,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           pendingSeekRef.current = null
           playerRef.current.seekTo(seekTarget, true)
         }
+        // With the screen locked, iOS sometimes still lets a newly loaded video
+        // start for a moment and then pauses it before it really gets going —
+        // stricter than ordinary backgrounding, and not something a retry can
+        // reliably beat if iOS is enforcing it. This costs nothing on a normal
+        // auto-advance (where it's already playing and the extra call is a
+        // no-op) and recovers the borderline cases where the first attempt
+        // just lost a timing race.
+        window.setTimeout(() => {
+          if (playerRef.current?.getPlayerState() !== YT.PlayerState.PLAYING) {
+            playerRef.current?.playVideo()
+          }
+        }, 600)
         if (firebaseUser) void recordPlay(firebaseUser.uid, track.trackId).catch(() => {})
         return
       }
