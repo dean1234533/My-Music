@@ -23,9 +23,11 @@
     <meta name="twitter:title" content="My Music — a personal music library and player powered by YouTube." />
     <meta name="twitter:description" content="My Music — a personal music library and player powered by YouTube." />
     <meta name="twitter:image" content="/wavelength-hero.png" />
-    <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- Deliberately not "app-capable": that flag is what makes the Home Screen icon
+         launch full-screen with no Safari chrome, which also strips out Safari's native
+         video controls — including Picture-in-Picture. Leaving it off means the Home
+         Screen icon opens in a normal Safari tab, trading the full-screen native-app
+         look for PiP support (user's explicit choice over the full-screen look). -->
     <meta name="apple-mobile-web-app-title" content="My Music" />
     <title>My Music</title>
   </head>

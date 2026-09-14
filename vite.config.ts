@@ -43,7 +43,10 @@ export default defineConfig({
         id: '/',
         start_url: '/',
         scope: '/',
-        display: 'standalone',
+        // 'browser' (not 'standalone'): keeps the Home Screen icon opening in a normal
+        // Safari tab instead of full-screen chrome-less mode, since standalone mode
+        // strips out Safari's native video controls and Picture-in-Picture with them.
+        display: 'browser',
         background_color: '#050607',
         theme_color: '#050607',
         orientation: 'portrait-primary',
