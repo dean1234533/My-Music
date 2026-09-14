@@ -44,7 +44,12 @@ export function PlayerBar() {
     <div
       id="player-bar"
       className={clsx(
-        'fixed inset-x-0 bottom-[env(safe-area-inset-bottom)] z-50 border-t border-white/[0.08] bg-[#090b0d]/95 px-3 py-2 shadow-[0_-20px_50px_rgba(0,0,0,.2)] backdrop-blur-2xl md:px-6 md:py-3',
+        // MobileNav is also fixed to the very bottom of the screen (below md), so this must
+        // sit above it (bottom offset = MobileNav's own min-h-16) rather than overlapping it —
+        // both being fixed-bottom with this having the higher z-index previously meant the
+        // player bar fully covered the nav any time a track was playing (user-reported:
+        // "mobile has no nav"). At md and up MobileNav is hidden, so this sits flush again.
+        'fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-50 border-t border-white/[0.08] bg-[#090b0d]/95 px-3 py-2 shadow-[0_-20px_50px_rgba(0,0,0,.2)] backdrop-blur-2xl md:bottom-[env(safe-area-inset-bottom)] md:px-6 md:py-3',
         !currentTrack && 'hidden',
       )}
     >

@@ -445,6 +445,51 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     containerRef.current = el
   }, [])
 
+  // Lock-screen/notification "Now Playing" controls (title, artist, artwork,
+  // play/pause/next/previous/seek). This is the one legitimate lever a website
+  // has toward better background behaviour — it doesn't grant background
+  // playback by itself (that's a hard platform limit for audio coming from a
+  // cross-origin YouTube iframe, not something fixable here), but registering
+  // it correctly is what lets a browser/OS that DOES allow background media
+  // for this tab show real controls and treat playback as intentional "now
+  // playing" media instead of an anonymous background video.
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    if (!currentTrack) {
+      navigator.mediaSession.metadata = null
+      navigator.mediaSession.playbackState = 'none'
+      return
+    }
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: currentTrack.title,
+      artist: currentTrack.artist,
+      artwork: currentTrack.thumbnail ? [{ src: currentTrack.thumbnail, sizes: '480x360', type: 'image/jpeg' }] : [],
+    })
+    navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused'
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentTrack, isPlaying])
+
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return
+    navigator.mediaSession.setActionHandler('play', resume)
+    navigator.mediaSession.setActionHandler('pause', pause)
+    navigator.mediaSession.setActionHandler('previoustrack', previous)
+    navigator.mediaSession.setActionHandler('nexttrack', next)
+    navigator.mediaSession.setActionHandler('stop', stop)
+    navigator.mediaSession.setActionHandler('seekto', (details) => {
+      if (typeof details.seekTime === 'number') seek(details.seekTime)
+    })
+    return () => {
+      for (const action of ['play', 'pause', 'previoustrack', 'nexttrack', 'stop', 'seekto'] as const) {
+        try {
+          navigator.mediaSession.setActionHandler(action, null)
+        } catch {
+          // Some actions aren't supported in every browser — safe to ignore.
+        }
+      }
+    }
+  }, [resume, pause, previous, next, stop, seek])
+
   const value = useMemo<PlayerContextValue>(
     () => ({
       currentTrack,
