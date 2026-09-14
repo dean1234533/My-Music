@@ -21,20 +21,26 @@ test('a user can read/write their own playlists but not another user\'s', () => 
   assert.match(rules, /function isOwner\(field\) \{\s*return isSignedIn\(\) && request\.auth\.uid == field;/)
 })
 
-test('a user can read/write their own favorites but not another user\'s, and the doc ID must match ${uid}_${trackId}', () => {
+test('a user can read/write their own favorites but not another user\'s, and the doc ID must match ${uid}_${trackId}; re-saving an already-favourited track is allowed as a no-op, but not with a different uid/trackId', () => {
   const block = blockFor('favorites/{favoriteId}')
   assert.match(block, /allow read, delete: if isOwner\(resource\.data\.uid\)/)
   assert.match(block, /allow create: if isOwner\(request\.resource\.data\.uid\)/)
   assert.match(block, /favoriteId == request\.resource\.data\.uid \+ '_' \+ request\.resource\.data\.trackId/)
-  assert.match(block, /allow update: if false/)
+  // setDoc() without merge is a full overwrite — Firestore treats it as an update whenever
+  // the doc already exists, so re-adding an already-favourited track must not be a flat
+  // `allow update: if false` (that was the actual bug: "add all to library" always fails
+  // for tracks already saved, since the second setDoc call to the same doc ID is an update).
+  assert.doesNotMatch(block, /allow update: if false/)
+  assert.match(block, /allow update: if isOwner\(resource\.data\.uid\)\s*&& request\.resource\.data\.uid == resource\.data\.uid\s*&& request\.resource\.data\.trackId == resource\.data\.trackId/)
 })
 
-test('a user can read/write their own savedTracks (independent library) but not another user\'s, and the doc ID must match ${uid}_${trackId}', () => {
+test('a user can read/write their own savedTracks (independent library) but not another user\'s, and the doc ID must match ${uid}_${trackId}; re-saving an already-saved track is allowed as a no-op, but not with a different uid/trackId', () => {
   const block = blockFor('savedTracks/{savedId}')
   assert.match(block, /allow read, delete: if isOwner\(resource\.data\.uid\)/)
   assert.match(block, /allow create: if isOwner\(request\.resource\.data\.uid\)/)
   assert.match(block, /savedId == request\.resource\.data\.uid \+ '_' \+ request\.resource\.data\.trackId/)
-  assert.match(block, /allow update: if false/)
+  assert.doesNotMatch(block, /allow update: if false/)
+  assert.match(block, /allow update: if isOwner\(resource\.data\.uid\)\s*&& request\.resource\.data\.uid == resource\.data\.uid\s*&& request\.resource\.data\.trackId == resource\.data\.trackId/)
 })
 
 test('a user can create/read their own playHistory entries but not another user\'s, and cannot update an existing entry', () => {

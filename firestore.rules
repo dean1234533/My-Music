@@ -84,7 +84,12 @@ service cloud.firestore {
       allow read, delete: if isOwner(resource.data.uid);
       allow create: if isOwner(request.resource.data.uid)
         && favoriteId == request.resource.data.uid + '_' + request.resource.data.trackId;
-      allow update: if false;
+      // The client re-favourites via setDoc() without merge — a full overwrite, which
+      // Firestore treats as an update (not a create) whenever the doc already exists.
+      // Allowed as a no-op re-save as long as ownership/identity fields never change.
+      allow update: if isOwner(resource.data.uid)
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.trackId == resource.data.trackId;
     }
 
     // ---------------------------------------------------------------------
@@ -97,7 +102,13 @@ service cloud.firestore {
       allow read, delete: if isOwner(resource.data.uid);
       allow create: if isOwner(request.resource.data.uid)
         && savedId == request.resource.data.uid + '_' + request.resource.data.trackId;
-      allow update: if false;
+      // The client re-saves via setDoc() without merge — a full overwrite, which Firestore
+      // treats as an update (not a create) whenever the doc already exists (e.g. re-adding
+      // a track that's already in the library, or a concurrent duplicate within one bulk
+      // "add all" import). Allowed as a no-op re-save as long as identity fields don't change.
+      allow update: if isOwner(resource.data.uid)
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.trackId == resource.data.trackId;
     }
 
     // ---------------------------------------------------------------------
