@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { markTrackUnavailable } from '@/services/trackService'
+import { getTracks, markTrackUnavailable } from '@/services/trackService'
 import { recordPlay } from '@/services/historyService'
 import { getSettings } from '@/services/settingsService'
 import type { TrackDoc } from '@/types/track'
@@ -57,12 +57,31 @@ interface PlayerContextValue {
   setVolume: (volume: number) => void
   toggleShuffle: () => void
   cycleRepeat: () => void
+  /** Timestamp (Date.now()-based) the sleep timer will fire at, or null if none is set. */
+  sleepTimerEndsAt: number | null
+  setSleepTimer: (minutes: number | null) => void
 }
 
 const PlayerContext = createContext<PlayerContextValue | undefined>(undefined)
 
 /** Pressing Previous restarts the current track once you're this far into it, rather than jumping back a track — standard music-player behaviour. */
 const PREVIOUS_RESTART_THRESHOLD_SEC = 3
+
+/** How often the resume-on-refresh session's saved progress is refreshed while playing — not on every 500ms progress tick, just often enough that resuming loses at most a few seconds. */
+const SESSION_PROGRESS_SAVE_INTERVAL_MS = 5000
+
+interface PlayerSessionV1 {
+  currentTrackId: string
+  queueIds: string[]
+  playOrderIds: string[]
+  progressSec: number
+  shuffle: boolean
+  repeat: RepeatMode
+}
+
+function sessionKeyForUid(uid: string): string {
+  return `myMusic.playerSession.${uid}`
+}
 
 function shuffleArray<T>(items: T[]): T[] {
   const copy = [...items]
@@ -85,6 +104,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const progressSecRef = useRef(0)
   const repeatRef = useRef<RepeatMode>('off')
   const autoplayNextRef = useRef(true)
+  /** Set only right after restoring a session from localStorage — consumed (and cleared) the first time a player actually loads, so a normal fresh play never seeks. */
+  const pendingSeekRef = useRef<number | null>(null)
+  const sleepTimerRef = useRef<number | null>(null)
   const [currentTrack, setCurrentTrack] = useState<TrackDoc | null>(null)
   const [queue, setQueue] = useState<TrackDoc[]>([])
   const [playOrder, setPlayOrder] = useState<TrackDoc[]>([])
@@ -95,6 +117,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [volume, setVolumeState] = useState(80)
   const [shuffle, setShuffle] = useState(false)
   const [repeat, setRepeat] = useState<RepeatMode>('off')
+  const [sleepTimerEndsAt, setSleepTimerEndsAt] = useState<number | null>(null)
 
   useEffect(() => {
     playOrderRef.current = playOrder
@@ -157,6 +180,94 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     previousUserIdRef.current = nextUserId
   }, [firebaseUser?.uid, resetState])
 
+  /**
+   * Resume-on-refresh: restores the last track/queue/shuffle/repeat from
+   * localStorage whenever a user becomes known (initial load, or switching
+   * accounts on a shared browser — each uid gets its own key). Deliberately
+   * does NOT create a player or start playback — that would be an autoplay
+   * the person never asked for on this visit. It only re-populates
+   * currentTrack/queue so the UI shows what was playing; pressing Play is
+   * what actually loads the player, at which point pendingSeekRef restores
+   * the saved position once, then gets cleared for good.
+   */
+  useEffect(() => {
+    const uid = firebaseUser?.uid
+    if (!uid) return
+    let cancelled = false
+    try {
+      const raw = localStorage.getItem(sessionKeyForUid(uid))
+      if (!raw) return
+      const session = JSON.parse(raw) as Partial<PlayerSessionV1>
+      if (!session.currentTrackId) return
+      const allIds = [...new Set([session.currentTrackId, ...(session.queueIds ?? []), ...(session.playOrderIds ?? [])])]
+      void getTracks(allIds).then((trackMap) => {
+        if (cancelled) return
+        const resolvedCurrent = trackMap.get(session.currentTrackId!)
+        if (!resolvedCurrent) return
+        const resolvedQueue = (session.queueIds ?? []).map((id) => trackMap.get(id)).filter((t): t is TrackDoc => !!t)
+        const resolvedOrder = (session.playOrderIds ?? []).map((id) => trackMap.get(id)).filter((t): t is TrackDoc => !!t)
+        setCurrentTrack(resolvedCurrent)
+        setQueue(resolvedQueue.length > 0 ? resolvedQueue : [resolvedCurrent])
+        setPlayOrder(resolvedOrder.length > 0 ? resolvedOrder : resolvedQueue.length > 0 ? resolvedQueue : [resolvedCurrent])
+        setProgressSec(session.progressSec ?? 0)
+        if (typeof session.shuffle === 'boolean') setShuffle(session.shuffle)
+        if (session.repeat) setRepeat(session.repeat)
+        pendingSeekRef.current = session.progressSec ?? 0
+      })
+    } catch {
+      // Corrupt/unavailable localStorage — resuming is a convenience, never worth failing over.
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [firebaseUser?.uid])
+
+  /** Keeps the resume-on-refresh session current: track/queue identity saved immediately, progress saved every few seconds while something is loaded. */
+  useEffect(() => {
+    const uid = firebaseUser?.uid
+    if (!uid) return
+    if (!currentTrack) {
+      try {
+        localStorage.removeItem(sessionKeyForUid(uid))
+      } catch {
+        // Ignore — nothing meaningful to clean up if storage isn't available.
+      }
+      return
+    }
+    const session: PlayerSessionV1 = {
+      currentTrackId: currentTrack.trackId,
+      queueIds: queue.map((t) => t.trackId),
+      playOrderIds: playOrder.map((t) => t.trackId),
+      progressSec: progressSecRef.current,
+      shuffle,
+      repeat,
+    }
+    try {
+      localStorage.setItem(sessionKeyForUid(uid), JSON.stringify(session))
+    } catch {
+      // Ignore — resuming is a convenience, never worth surfacing an error for.
+    }
+  }, [firebaseUser?.uid, currentTrack, queue, playOrder, shuffle, repeat])
+
+  useEffect(() => {
+    const uid = firebaseUser?.uid
+    if (!uid) return
+    const interval = window.setInterval(() => {
+      if (!currentTrackRef.current) return
+      try {
+        const key = sessionKeyForUid(uid)
+        const raw = localStorage.getItem(key)
+        if (!raw) return
+        const session = JSON.parse(raw) as PlayerSessionV1
+        session.progressSec = progressSecRef.current
+        localStorage.setItem(key, JSON.stringify(session))
+      } catch {
+        // Ignore — resuming is a convenience, never worth surfacing an error for.
+      }
+    }, SESSION_PROGRESS_SAVE_INTERVAL_MS)
+    return () => window.clearInterval(interval)
+  }, [firebaseUser?.uid])
+
   useEffect(() => destroyPlayer, [destroyPlayer])
 
   const stepQueueRef = useRef<(direction: 1 | -1) => void>(() => {})
@@ -206,6 +317,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
               // starting the official player here is that same gesture,
               // never an autoplay the visitor didn't ask for.
               event.target.playVideo()
+              // Consumed once, right after a resumed-from-refresh session's first real
+              // play — never applies to a normal fresh play, and never applies twice.
+              if (pendingSeekRef.current !== null) {
+                const seekTarget = pendingSeekRef.current
+                pendingSeekRef.current = null
+                event.target.seekTo(seekTarget, true)
+              }
               resolve()
             },
             onError: (event) => {
@@ -342,22 +460,33 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const togglePlay = useCallback(() => {
+    if (!currentTrackRef.current) return
     const player = playerRef.current
-    if (!player || !currentTrack) return
+    // No live player yet means this is a session restored from a previous visit — the
+    // track/queue were repopulated on load, but never auto-played. Pressing Play here is
+    // the real, deliberate play the restore itself was careful not to trigger.
+    if (!player) {
+      void loadAndPlay(currentTrackRef.current)
+      return
+    }
     if (isPlaying) {
       player.pauseVideo()
     } else {
       player.playVideo()
     }
-  }, [currentTrack, isPlaying])
+  }, [isPlaying, loadAndPlay])
 
   const pause = useCallback(() => {
     playerRef.current?.pauseVideo()
   }, [])
 
   const resume = useCallback(() => {
+    if (!playerRef.current && currentTrackRef.current) {
+      void loadAndPlay(currentTrackRef.current)
+      return
+    }
     playerRef.current?.playVideo()
-  }, [])
+  }, [loadAndPlay])
 
   /** Plays a playlist/liked-songs/library list from its first track, queuing the rest. Thin, named wrappers around playTrack for call-site clarity. */
   const playPlaylist = useCallback((tracks: TrackDoc[]) => {
@@ -445,6 +574,30 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     containerRef.current = el
   }, [])
 
+  /** Pauses (not stops — the track/queue stay intact) once the timer elapses, e.g. for falling asleep to music. Passing null cancels an active timer. */
+  const setSleepTimer = useCallback((minutes: number | null) => {
+    if (sleepTimerRef.current !== null) {
+      window.clearTimeout(sleepTimerRef.current)
+      sleepTimerRef.current = null
+    }
+    if (minutes === null) {
+      setSleepTimerEndsAt(null)
+      return
+    }
+    setSleepTimerEndsAt(Date.now() + minutes * 60_000)
+    sleepTimerRef.current = window.setTimeout(() => {
+      playerRef.current?.pauseVideo()
+      sleepTimerRef.current = null
+      setSleepTimerEndsAt(null)
+    }, minutes * 60_000)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (sleepTimerRef.current !== null) window.clearTimeout(sleepTimerRef.current)
+    }
+  }, [])
+
   // Lock-screen/notification "Now Playing" controls (title, artist, artwork,
   // play/pause/next/previous/seek). This is the one legitimate lever a website
   // has toward better background behaviour — it doesn't grant background
@@ -490,6 +643,56 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
   }, [resume, pause, previous, next, stop, seek])
 
+  /**
+   * Desktop keyboard shortcuts: space to play/pause, left/right arrows to
+   * seek, N/P for next/previous, up/down arrows for volume. Ignored while
+   * typing in any input/textarea/select/contenteditable so it never hijacks
+   * normal typing (e.g. the search box, playlist rename field).
+   */
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null
+      const tag = target?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) return
+      if (!currentTrackRef.current) return
+
+      switch (event.key) {
+        case ' ':
+          event.preventDefault()
+          togglePlay()
+          break
+        case 'ArrowRight':
+          event.preventDefault()
+          seek(Math.max(0, progressSecRef.current + 5))
+          break
+        case 'ArrowLeft':
+          event.preventDefault()
+          seek(Math.max(0, progressSecRef.current - 5))
+          break
+        case 'ArrowUp':
+          event.preventDefault()
+          setVolume(Math.min(100, volume + 5))
+          break
+        case 'ArrowDown':
+          event.preventDefault()
+          setVolume(Math.max(0, volume - 5))
+          break
+        case 'n':
+        case 'N':
+          next()
+          break
+        case 'p':
+        case 'P':
+          previous()
+          break
+        default:
+          break
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [togglePlay, seek, setVolume, volume, next, previous])
+
   const value = useMemo<PlayerContextValue>(
     () => ({
       currentTrack,
@@ -523,6 +726,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setVolume,
       toggleShuffle,
       cycleRepeat,
+      sleepTimerEndsAt,
+      setSleepTimer,
     }),
     [
       currentTrack,
@@ -556,6 +761,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setVolume,
       toggleShuffle,
       cycleRepeat,
+      sleepTimerEndsAt,
+      setSleepTimer,
     ],
   )
 

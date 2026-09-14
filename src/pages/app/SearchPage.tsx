@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Check, ChevronDown, ChevronUp, ListPlus, ListMusic, Plus, Search as SearchIcon } from 'lucide-react'
+import { Check, ChevronDown, ChevronUp, ClipboardList, ListPlus, ListMusic, Plus, Search as SearchIcon, X } from 'lucide-react'
 import { Input } from '@/components/common/Input'
 import { Button } from '@/components/common/Button'
 import { PlaylistPickerModal } from '@/components/music/PlaylistPickerModal'
@@ -54,6 +54,16 @@ function matchesQuery(track: TrackDoc, query: string): boolean {
   return track.title.toLowerCase().includes(q) || track.artist.toLowerCase().includes(q)
 }
 
+/** Caps a single paste-list import's quota/latency cost — each line is its own search call. */
+const MAX_BULK_LINES = 25
+
+interface BulkLineResult {
+  line: string
+  status: 'pending' | 'searching' | 'found' | 'notfound' | 'error'
+  result: YoutubeSearchResult | null
+  included: boolean
+}
+
 export function SearchPage() {
   const { notify } = useToast()
   const { firebaseUser } = useAuth()
@@ -66,6 +76,7 @@ export function SearchPage() {
   const [recentSearches, setRecentSearches] = useState<string[]>([])
   const [pickerTrack, setPickerTrack] = useState<TrackDoc | null>(null)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
+  const [musicOnly, setMusicOnly] = useState(true)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Kept locally so results can be marked "Already in your library" and so
@@ -82,6 +93,14 @@ export function SearchPage() {
   const [importedTitle, setImportedTitle] = useState<string | null>(null)
   const [importedResults, setImportedResults] = useState<YoutubeSearchResult[] | null>(null)
   const [bulkBusy, setBulkBusy] = useState(false)
+
+  // Paste-list import — migrate a playlist from elsewhere by pasting song names, one per line.
+  const [pasteOpen, setPasteOpen] = useState(false)
+  const [pasteText, setPasteText] = useState('')
+  const [pasteRunning, setPasteRunning] = useState(false)
+  const [pasteLines, setPasteLines] = useState<BulkLineResult[] | null>(null)
+  const [pastePlaylistName, setPastePlaylistName] = useState('')
+  const [pasteActionBusy, setPasteActionBusy] = useState(false)
 
   useEffect(() => {
     setRecentSearches(loadRecentSearches())
@@ -110,13 +129,13 @@ export function SearchPage() {
     return [...libraryTrackMap.values()].filter((t) => matchesQuery(t, term))
   }, [libraryTrackMap, term])
 
-  async function runSearch(query: string) {
+  async function runSearch(query: string, scopeMusicOnly = musicOnly) {
     const trimmed = query.trim()
     if (!trimmed) return
     setLoading(true)
     setError(null)
     try {
-      const found = await searchYoutube(trimmed)
+      const found = await searchYoutube(trimmed, scopeMusicOnly)
       setResults(found)
       saveRecentSearch(trimmed)
       setRecentSearches(loadRecentSearches())
@@ -125,6 +144,11 @@ export function SearchPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  function handleScopeChange(nextMusicOnly: boolean) {
+    setMusicOnly(nextMusicOnly)
+    if (term.trim()) void runSearch(term, nextMusicOnly)
   }
 
   function handleChange(value: string) {
@@ -245,6 +269,75 @@ export function SearchPage() {
     }
   }
 
+  /** Searches one line at a time (not in parallel) so a bulk paste of many songs doesn't burst past the per-user search rate limit all at once. */
+  async function handlePasteSearch(event: FormEvent) {
+    event.preventDefault()
+    const lines = pasteText
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .slice(0, MAX_BULK_LINES)
+    if (lines.length === 0) return
+    setPasteRunning(true)
+    setPasteLines(lines.map((line) => ({ line, status: 'pending', result: null, included: true })))
+    for (let i = 0; i < lines.length; i += 1) {
+      setPasteLines((prev) => prev?.map((l, idx) => (idx === i ? { ...l, status: 'searching' } : l)) ?? prev)
+      try {
+        const found = await searchYoutube(lines[i])
+        const top = found[0] ?? null
+        setPasteLines((prev) =>
+          prev?.map((l, idx) => (idx === i ? { ...l, status: top ? 'found' : 'notfound', result: top } : l)) ?? prev,
+        )
+      } catch {
+        setPasteLines((prev) => prev?.map((l, idx) => (idx === i ? { ...l, status: 'error', result: null } : l)) ?? prev)
+      }
+    }
+    setPasteRunning(false)
+  }
+
+  function toggleLineIncluded(index: number) {
+    setPasteLines((prev) => prev?.map((l, idx) => (idx === index ? { ...l, included: !l.included } : l)) ?? prev)
+  }
+
+  function pasteMatchedTracks(): YoutubeSearchResult[] {
+    return (pasteLines ?? []).filter((l) => l.included && l.result).map((l) => l.result!)
+  }
+
+  async function handlePasteAddAllToLibrary() {
+    if (!firebaseUser || pasteActionBusy) return
+    const matched = pasteMatchedTracks()
+    if (matched.length === 0) return
+    setPasteActionBusy(true)
+    try {
+      const tracks = await Promise.all(matched.map((r) => saveTrack(resultToSaveInput(r))))
+      await Promise.all(tracks.map((t) => saveToLibrary(firebaseUser.uid, t.trackId)))
+      notify(`Added ${tracks.length} ${tracks.length === 1 ? 'track' : 'tracks'} to your library.`)
+    } catch {
+      notify('Could not add all tracks. Please try again.', 'error')
+    } finally {
+      setPasteActionBusy(false)
+    }
+  }
+
+  async function handlePasteCreatePlaylist() {
+    if (!firebaseUser || pasteActionBusy) return
+    const matched = pasteMatchedTracks()
+    if (matched.length === 0) return
+    setPasteActionBusy(true)
+    try {
+      const tracks = await Promise.all(matched.map((r) => saveTrack(resultToSaveInput(r))))
+      const title = pastePlaylistName.trim() || 'Imported playlist'
+      const playlistId = await createPlaylist(firebaseUser.uid, title)
+      await reorderPlaylistTracks(playlistId, tracks.map((t) => t.trackId))
+      notify(`Created “${title}” with ${tracks.length} ${tracks.length === 1 ? 'track' : 'tracks'}.`)
+      navigate(`/app/playlists/${playlistId}`)
+    } catch {
+      notify('Could not create the playlist. Please try again.', 'error')
+    } finally {
+      setPasteActionBusy(false)
+    }
+  }
+
   const showYoutubeSection = results !== null || loading || error !== null
 
   function renderResultRow(result: YoutubeSearchResult) {
@@ -319,6 +412,24 @@ export function SearchPage() {
             autoFocus
           />
         </form>
+        <div className="mt-2 flex flex-wrap items-center gap-1 text-xs">
+          <button
+            type="button"
+            onClick={() => handleScopeChange(true)}
+            aria-pressed={musicOnly}
+            className={`rounded-full px-3 py-1 font-medium transition ${musicOnly ? 'bg-brand-500 text-[#080a05]' : 'text-ink-3 hover:text-ink-1'}`}
+          >
+            Songs
+          </button>
+          <button
+            type="button"
+            onClick={() => handleScopeChange(false)}
+            aria-pressed={!musicOnly}
+            className={`rounded-full px-3 py-1 font-medium transition ${!musicOnly ? 'bg-brand-500 text-[#080a05]' : 'text-ink-3 hover:text-ink-1'}`}
+          >
+            All videos
+          </button>
+        </div>
         <button
           type="button"
           onClick={() => setImportOpen((v) => !v)}
@@ -366,6 +477,120 @@ export function SearchPage() {
                   </div>
                 </div>
                 <div className="flex flex-col gap-2">{importedResults.map(renderResultRow)}</div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        <button
+          type="button"
+          onClick={() => setPasteOpen((v) => !v)}
+          className="mt-2 flex items-center gap-1.5 text-xs font-medium text-ink-3 hover:text-ink-1"
+        >
+          <ClipboardList size={14} />
+          Migrate a playlist by pasting song names
+          {pasteOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
+
+        {pasteOpen ? (
+          <div className="mt-3 rounded-xl border border-white/[0.08] bg-white/[0.02] p-4">
+            <form onSubmit={handlePasteSearch} className="flex flex-col gap-2">
+              <textarea
+                value={pasteText}
+                onChange={(e) => setPasteText(e.target.value)}
+                placeholder={'One song per line, e.g.\nBlinding Lights – The Weeknd\nLose Yourself – Eminem'}
+                rows={5}
+                className="w-full rounded-xl border border-white/10 bg-white/[0.035] px-4 py-3 text-sm text-ink-0 placeholder:text-ink-3 outline-none focus:border-brand-500/70"
+              />
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-ink-3">Up to {MAX_BULK_LINES} lines — each one is a separate search, so this can take a moment.</p>
+                <Button type="submit" size="sm" loading={pasteRunning} disabled={!pasteText.trim()}>
+                  Search all
+                </Button>
+              </div>
+            </form>
+
+            {pasteLines ? (
+              <div className="mt-4 flex flex-col gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Input
+                    value={pastePlaylistName}
+                    onChange={(e) => setPastePlaylistName(e.target.value)}
+                    placeholder="New playlist name"
+                    className="max-w-xs"
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => void handlePasteAddAllToLibrary()}
+                      loading={pasteActionBusy}
+                      disabled={pasteRunning || pasteMatchedTracks().length === 0}
+                    >
+                      Add matched to library
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => void handlePasteCreatePlaylist()}
+                      loading={pasteActionBusy}
+                      disabled={pasteRunning || pasteMatchedTracks().length === 0}
+                    >
+                      Create playlist
+                    </Button>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-2">
+                  {pasteLines.map((line, index) => (
+                    <div
+                      key={`${line.line}-${index}`}
+                      className="flex items-center gap-3 rounded-xl border border-white/[0.07] bg-white/[0.02] p-3"
+                    >
+                      {line.status === 'searching' || line.status === 'pending' ? (
+                        <div className="h-11 w-11 shrink-0 animate-pulse rounded-lg bg-surface-3" />
+                      ) : line.result?.thumbnail ? (
+                        <img src={line.result.thumbnail} alt="" className="h-11 w-11 shrink-0 rounded-lg object-cover" />
+                      ) : (
+                        <div className="h-11 w-11 shrink-0 rounded-lg bg-surface-3" />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        {line.result ? (
+                          <>
+                            <p className="truncate text-sm font-semibold text-ink-0">{line.result.title}</p>
+                            <p className="truncate text-xs text-ink-3">
+                              Matched for “{line.line}” · {line.result.channelTitle}
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="truncate text-sm text-ink-1">{line.line}</p>
+                            <p className="truncate text-xs text-ink-3">
+                              {line.status === 'searching' || line.status === 'pending'
+                                ? 'Searching…'
+                                : line.status === 'error'
+                                  ? 'Search failed'
+                                  : 'No match found'}
+                            </p>
+                          </>
+                        )}
+                      </div>
+                      {line.result ? (
+                        <button
+                          type="button"
+                          onClick={() => toggleLineIncluded(index)}
+                          aria-label={line.included ? 'Exclude from import' : 'Include in import'}
+                          title={line.included ? 'Exclude from import' : 'Include in import'}
+                          className={`grid h-9 w-9 shrink-0 place-items-center rounded-full border transition ${
+                            line.included
+                              ? 'border-brand-400/30 bg-brand-500/15 text-brand-400'
+                              : 'border-white/[0.08] bg-black/25 text-ink-3'
+                          }`}
+                        >
+                          {line.included ? <Check size={18} /> : <X size={18} />}
+                        </button>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : null}
           </div>

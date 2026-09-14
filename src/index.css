@@ -44,6 +44,42 @@
   --color-warning-500: #f59e0b;
 }
 
+/* Light theme — dark is the default/fallback above (and what an explicit "dark" choice
+   keeps), so only the light values need overriding here. Applied automatically when the OS
+   prefers light and the user hasn't explicitly forced dark, or forced unconditionally when
+   the user explicitly picked light (see src/lib/theme.ts) — the explicit [data-theme="light"]
+   rule sits outside the media query so it always wins over a dark system preference too.
+   Semantic accent colours (brand/support/dj/danger/warning) are left the same in both themes;
+   only the neutral surface/ink scale actually needs to flip. Not yet visually verified against
+   every component in a live browser — flagged as a known limitation until it has been. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --color-surface-0: #f7f7f5;
+    --color-surface-1: #ffffff;
+    --color-surface-2: #f0f0ec;
+    --color-surface-3: #e4e4de;
+    --color-surface-border: #d6d6cf;
+
+    --color-ink-0: #14161a;
+    --color-ink-1: #3c4147;
+    --color-ink-2: #5b6066;
+    --color-ink-3: #6b7076;
+  }
+}
+
+:root[data-theme="light"] {
+  --color-surface-0: #f7f7f5;
+  --color-surface-1: #ffffff;
+  --color-surface-2: #f0f0ec;
+  --color-surface-3: #e4e4de;
+  --color-surface-border: #d6d6cf;
+
+  --color-ink-0: #14161a;
+  --color-ink-1: #3c4147;
+  --color-ink-2: #5b6066;
+  --color-ink-3: #6b7076;
+}
+
 html,
 body,
 #root {

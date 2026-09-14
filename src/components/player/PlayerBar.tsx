@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Square, Volume2 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { usePlayer } from '@/contexts/PlayerContext'
@@ -6,6 +6,13 @@ import { useAuth } from '@/contexts/AuthContext'
 import { formatDuration } from '@/utils/format'
 import { TrackActions } from '@/components/music/TrackActions'
 import { FullScreenPlayer } from '@/components/player/FullScreenPlayer'
+
+interface Rect {
+  top: number
+  left: number
+  width: number
+  height: number
+}
 
 export function PlayerBar() {
   const {
@@ -29,18 +36,50 @@ export function PlayerBar() {
   } = usePlayer()
   const { firebaseUser } = useAuth()
   const [expanded, setExpanded] = useState(false)
+  const miniSlotRef = useRef<HTMLDivElement | null>(null)
+  const fullSlotRef = useRef<HTMLDivElement | null>(null)
+  // The one real, live YouTube iframe is a single DOM node (see attachContainer/PlayerContext)
+  // that's visually repositioned via these coordinates rather than ever being moved in the
+  // React tree — moving it via React unmount/remount would destroy and recreate the iframe,
+  // restarting playback. Sized/positioned to exactly cover whichever placeholder slot (the mini
+  // corner box, or FullScreenPlayer's big artwork box) is currently in the DOM.
+  const [videoRect, setVideoRect] = useState<Rect>({ top: 0, left: 0, width: 56, height: 56 })
+
+  useEffect(() => {
+    function measure() {
+      const el = expanded ? fullSlotRef.current : miniSlotRef.current
+      if (!el) return
+      const rect = el.getBoundingClientRect()
+      setVideoRect({ top: rect.top, left: rect.left, width: rect.width, height: rect.height })
+    }
+    measure()
+    // A frame later too — covers the FullScreenPlayer slot's very first mount, where layout
+    // can settle a moment after the initial synchronous measurement.
+    const raf = requestAnimationFrame(measure)
+    window.addEventListener('resize', measure)
+    window.addEventListener('orientationchange', measure)
+    return () => {
+      cancelAnimationFrame(raf)
+      window.removeEventListener('resize', measure)
+      window.removeEventListener('orientationchange', measure)
+    }
+  }, [expanded, currentTrack])
 
   return (
     <>
     {/* Always mounted (never conditionally removed) — the YouTube IFrame API needs this
-        node to exist in the DOM *before* the very first play attempt. Returning null here
-        until a track exists (as this used to) meant PlayerContext.loadAndPlay's very first
-        call always found attachContainer's ref still null and failed with "Player is not
-        ready yet.", since React hadn't yet rendered this component for the first time when
-        that synchronous check ran (user-reported: "when i search for a track i cant play
-        songs from there" — always failed on the first play of a session). Hiding via the
-        `hidden` utility (display:none) keeps the node mounted while invisible, which is all
-        that's needed — it becomes visible automatically once currentTrack is set. */}
+        node to exist in the DOM *before* the very first play attempt, and it must never be
+        unmounted/remounted afterward (that would destroy and recreate the iframe, restarting
+        playback) — see videoRect above for how it moves between the mini and full-screen slots
+        instead. Hidden via the `hidden` utility (display:none) while no track is loaded, which
+        keeps the node mounted while invisible — that's all that's needed; it becomes visible
+        automatically once currentTrack is set. */}
+    <div
+      className={clsx('fixed z-[61] overflow-hidden rounded-[10px] bg-black transition-[top,left,width,height] duration-150', !currentTrack && 'hidden')}
+      style={{ top: videoRect.top, left: videoRect.left, width: videoRect.width, height: videoRect.height }}
+    >
+      <div ref={attachContainer} className="h-full w-full" />
+    </div>
     <div
       id="player-bar"
       className={clsx(
@@ -65,14 +104,9 @@ export function PlayerBar() {
       </div>
       <div className="flex items-center gap-3">
         <div className="flex min-w-0 flex-1 items-center gap-3">
-          {/* Official YouTube player mount — this is the actual playback surface, not decoration. Never hidden behind a custom UI, and never nested inside a <button> (would trap the iframe's own interaction). */}
-          {/* Sized large enough to comfortably reach Safari's native picture-in-picture
-              control on the video itself (tiny thumbnails make that control too small to
-              tap reliably) — PiP is the one real way iOS keeps this playing while you
-              switch to another app, since backgrounding the tab otherwise pauses it. */}
-          <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-[10px] bg-black ring-1 ring-white/10 sm:h-16 sm:w-16">
-            <div ref={attachContainer} className="h-full w-full" />
-          </div>
+          {/* Placeholder slot only — the real, live video visually overlays this exact spot
+              (see videoRect above). Never holds the iframe itself. */}
+          <div ref={miniSlotRef} className="relative h-14 w-14 shrink-0 ring-1 ring-white/10 sm:h-16 sm:w-16" />
           {currentTrack ? (
             <button
               type="button"
@@ -176,7 +210,7 @@ export function PlayerBar() {
         <p className="mt-1 text-center text-[11px] text-ink-3">Played via YouTube</p>
       )}
     </div>
-    {expanded && currentTrack ? <FullScreenPlayer onClose={() => setExpanded(false)} /> : null}
+    {expanded && currentTrack ? <FullScreenPlayer onClose={() => setExpanded(false)} slotRef={fullSlotRef} /> : null}
     </>
   )
 }

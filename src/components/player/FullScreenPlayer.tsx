@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type RefObject } from 'react'
 import { ChevronDown, ListMusic, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Square, X } from 'lucide-react'
 import { clsx } from 'clsx'
 import { usePlayer } from '@/contexts/PlayerContext'
@@ -7,12 +7,17 @@ import { formatDuration } from '@/utils/format'
 
 /**
  * The expanded, full-screen "Now Playing" view — mainly for mobile, where the
- * compact PlayerBar has no room for full-size artwork/queue access. Opened by
- * tapping the track info in PlayerBar; closes back to the compact bar, never
- * stops playback (the official YouTube player mount lives in PlayerBar and
- * keeps playing underneath regardless of which view is showing).
+ * compact PlayerBar has no room for full-size artwork/queue access, or for
+ * reaching the real YouTube player's own controls (play bar, settings gear,
+ * fullscreen, and — on iOS Safari — the native Picture-in-Picture toggle,
+ * none of which have room to render usably at the compact bar's tiny size).
+ * Opened by tapping the track info in PlayerBar; closes back to the compact
+ * bar, never stops playback. `slotRef` marks where PlayerBar should visually
+ * position the one real, live video while this view is open — see
+ * PlayerBar.tsx's videoRect for why it's moved by CSS position, not by
+ * actually reparenting the iframe.
  */
-export function FullScreenPlayer({ onClose }: { onClose: () => void }) {
+export function FullScreenPlayer({ onClose, slotRef }: { onClose: () => void; slotRef: RefObject<HTMLDivElement | null> }) {
   const {
     currentTrack,
     playOrder,
@@ -106,14 +111,19 @@ export function FullScreenPlayer({ onClose }: { onClose: () => void }) {
         </div>
       ) : (
         <div className="flex flex-1 flex-col items-center justify-center gap-8 px-6 pb-[calc(env(safe-area-inset-bottom)+1.5rem)]">
-          <div className="aspect-square w-full max-w-sm overflow-hidden rounded-2xl bg-surface-2 shadow-[0_30px_80px_rgba(0,0,0,.5)] ring-1 ring-white/[0.08]">
-            {currentTrack.thumbnail ? (
-              <img src={currentTrack.thumbnail} alt="" className="h-full w-full object-cover" />
-            ) : (
+          {/* Placeholder slot only — the real, live video visually overlays this exact spot
+              (see PlayerBar.tsx's videoRect). The thumbnail behind it is just a fallback
+              backdrop for the moment before that positioning settles. */}
+          <div
+            ref={slotRef}
+            className="aspect-square w-full max-w-sm overflow-hidden rounded-2xl bg-surface-2 shadow-[0_30px_80px_rgba(0,0,0,.5)] ring-1 ring-white/[0.08]"
+            style={currentTrack.thumbnail ? { backgroundImage: `url(${currentTrack.thumbnail})`, backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+          >
+            {!currentTrack.thumbnail ? (
               <div className="flex h-full w-full items-center justify-center text-ink-3">
                 <Play className="h-12 w-12" />
               </div>
-            )}
+            ) : null}
           </div>
 
           <div className="w-full max-w-sm">

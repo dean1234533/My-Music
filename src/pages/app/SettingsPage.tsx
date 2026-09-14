@@ -2,18 +2,41 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { useToast } from '@/contexts/ToastContext'
+import { usePlayer } from '@/contexts/PlayerContext'
 import { updateBasicProfile } from '@/services/userService'
 import { signOut } from '@/services/authService'
 import { getSettings, updateSettings } from '@/services/settingsService'
 import { clearHistory } from '@/services/historyService'
 import { exportUserData } from '@/services/accountService'
+import { getStoredTheme, setTheme, type ThemePreference } from '@/lib/theme'
 import { Button } from '@/components/common/Button'
 import { Input, Label } from '@/components/common/Input'
 import { AccountSecuritySection } from '@/components/account/AccountSecuritySection'
 import type { SettingsDoc } from '@/types/settings'
 import { DEFAULT_SETTINGS } from '@/types/settings'
 
+const SLEEP_TIMER_OPTIONS = [15, 30, 45, 60]
+
+function useCountdown(endsAt: number | null): string | null {
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    if (!endsAt) return
+    const interval = window.setInterval(() => setTick((t) => t + 1), 1000)
+    return () => window.clearInterval(interval)
+  }, [endsAt])
+  if (!endsAt) return null
+  const remainingMs = Math.max(0, endsAt - Date.now())
+  const minutes = Math.floor(remainingMs / 60_000)
+  const seconds = Math.floor((remainingMs % 60_000) / 1000)
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`
+}
+
 const RECENT_SEARCHES_KEY = 'myMusic.recentSearches'
+const THEME_OPTIONS: { id: ThemePreference; label: string }[] = [
+  { id: 'system', label: 'System' },
+  { id: 'light', label: 'Light' },
+  { id: 'dark', label: 'Dark' },
+]
 
 function Toggle({ checked, onChange }: { checked: boolean; onChange: (value: boolean) => void }) {
   return (
@@ -37,6 +60,9 @@ export function SettingsPage() {
   const { firebaseUser, profile } = useAuth()
   const { notify } = useToast()
   const navigate = useNavigate()
+  const { sleepTimerEndsAt, setSleepTimer } = usePlayer()
+  const sleepCountdown = useCountdown(sleepTimerEndsAt)
+  const [theme, setThemeState] = useState<ThemePreference>(() => getStoredTheme())
 
   const [displayName, setDisplayName] = useState(profile?.displayName ?? '')
   const [savingName, setSavingName] = useState(false)
@@ -149,6 +175,34 @@ export function SettingsPage() {
       </section>
 
       <section>
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-ink-3">Display</h2>
+        <div className="flex items-center justify-between rounded-xl border border-surface-border bg-surface-1 p-4">
+          <div>
+            <p className="text-sm text-ink-0">Theme</p>
+            <p className="text-xs text-ink-2">Not yet checked against every screen for contrast — say if anything looks off.</p>
+          </div>
+          <div className="flex gap-1.5">
+            {THEME_OPTIONS.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => {
+                  setTheme(option.id)
+                  setThemeState(option.id)
+                }}
+                aria-pressed={theme === option.id}
+                className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                  theme === option.id ? 'bg-brand-500 text-[#080a05]' : 'bg-white/[0.05] text-ink-1 hover:bg-white/[0.09]'
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-ink-3">Playback</h2>
         <div className="flex flex-col divide-y divide-white/[0.06] rounded-xl border border-surface-border bg-surface-1 p-4">
           <div className="flex items-center justify-between py-3 first:pt-0">
@@ -165,7 +219,7 @@ export function SettingsPage() {
             </div>
             <Toggle checked={playback.shuffleByDefault} onChange={(value) => void updatePlaybackSetting({ shuffleByDefault: value })} />
           </div>
-          <div className="py-3 last:pb-0">
+          <div className="py-3">
             <div className="mb-2 flex items-center justify-between">
               <p className="text-sm text-ink-0">Default volume</p>
               <span className="text-xs tabular-nums text-ink-3">{playback.defaultVolume}%</span>
@@ -178,6 +232,37 @@ export function SettingsPage() {
               onChange={(e) => void updatePlaybackSetting({ defaultVolume: Number(e.target.value) })}
               className="w-full accent-brand-500"
             />
+          </div>
+          <div className="py-3 last:pb-0">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-ink-0">Sleep timer</p>
+                <p className="text-xs text-ink-2">
+                  {sleepTimerEndsAt ? `Pausing in ${sleepCountdown}` : 'Automatically pause after a while.'}
+                </p>
+              </div>
+              {sleepTimerEndsAt ? (
+                <Button size="sm" variant="secondary" onClick={() => setSleepTimer(null)}>
+                  Cancel
+                </Button>
+              ) : (
+                <div className="flex gap-1.5">
+                  {SLEEP_TIMER_OPTIONS.map((minutes) => (
+                    <button
+                      key={minutes}
+                      type="button"
+                      onClick={() => {
+                        setSleepTimer(minutes)
+                        notify(`Sleep timer set for ${minutes} minutes.`)
+                      }}
+                      className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-ink-1 hover:bg-white/[0.08]"
+                    >
+                      {minutes}m
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </section>

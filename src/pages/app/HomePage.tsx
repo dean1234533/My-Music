@@ -63,6 +63,25 @@ export function HomePage() {
     void getTracks(ids).then(setSavedTrackMap)
   }, [savedTracks])
 
+  // Derived from the same resolved history list recentlyPlayed already builds (one entry per
+  // play event, duplicates included for repeat plays) — counting occurrences per track gives a
+  // real "most played" signal without a separate query or any fabricated data. Only surfaced
+  // once a track has genuinely been played more than once, so this never just mirrors "Recently
+  // played" with nothing to say.
+  const mostPlayed = useMemo(() => {
+    const counts = new Map<string, { track: TrackDoc; count: number }>()
+    for (const track of recentlyPlayed ?? []) {
+      const existing = counts.get(track.trackId)
+      if (existing) existing.count += 1
+      else counts.set(track.trackId, { track, count: 1 })
+    }
+    return [...counts.values()]
+      .filter((c) => c.count > 1)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 20)
+      .map((c) => c.track)
+  }, [recentlyPlayed])
+
   const recentlyAdded = useMemo(() => {
     return [...(savedTracks ?? [])]
       .sort((a, b) => millis(b.addedAt) - millis(a.addedAt))
@@ -108,6 +127,11 @@ export function HomePage() {
             title="Recently played"
             tracks={recentlyPlayed}
             emptyHint="Tracks you play will show up here."
+          />
+          <Rail
+            title="Most played"
+            tracks={mostPlayed}
+            emptyHint="Play a track a few times to see it here."
           />
           <Rail
             title="Recently added"

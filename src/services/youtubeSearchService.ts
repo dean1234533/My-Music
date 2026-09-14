@@ -10,7 +10,7 @@ export interface YoutubeSearchResult {
   isLive: boolean
 }
 
-const searchYoutubeCallable = callable<{ query: string }, { results: YoutubeSearchResult[] }>('searchYoutube')
+const searchYoutubeCallable = callable<{ query: string; musicOnly?: boolean }, { results: YoutubeSearchResult[] }>('searchYoutube')
 const importYoutubePlaylistCallable = callable<{ playlistUrl: string }, { playlistTitle: string; results: YoutubeSearchResult[] }>('importYoutubePlaylist')
 
 const CACHE_TTL_MS = 5 * 60 * 1000
@@ -24,15 +24,16 @@ const cache = new Map<string, { results: YoutubeSearchResult[]; expiresAt: numbe
  * function again — call this only on search submit/debounce settle, never
  * on every keystroke.
  */
-export async function searchYoutube(rawQuery: string): Promise<YoutubeSearchResult[]> {
+export async function searchYoutube(rawQuery: string, musicOnly = true): Promise<YoutubeSearchResult[]> {
   const query = rawQuery.trim()
   if (!query) return []
 
-  const cached = cache.get(query)
+  const cacheKey = `${musicOnly ? 'music' : 'all'}:${query}`
+  const cached = cache.get(cacheKey)
   if (cached && cached.expiresAt > Date.now()) return cached.results
 
-  const { results } = await searchYoutubeCallable({ query })
-  cache.set(query, { results, expiresAt: Date.now() + CACHE_TTL_MS })
+  const { results } = await searchYoutubeCallable({ query, musicOnly })
+  cache.set(cacheKey, { results, expiresAt: Date.now() + CACHE_TTL_MS })
   return results
 }
 

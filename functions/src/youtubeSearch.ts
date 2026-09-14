@@ -77,6 +77,10 @@ export const searchYoutube = onCall({ secrets: [youtubeApiKey] }, async (request
     throw new HttpsError('invalid-argument', 'A search query is required.')
   }
   const trimmedQuery = query.trim().slice(0, 200)
+  // Defaults to Music-category-only (the normal case); passing musicOnly: false drops that
+  // filter for videos YouTube didn't categorise as Music but are still what someone wants
+  // (a live set filed under Entertainment, a lecture-style artist interview, etc.).
+  const musicOnly = request.data?.musicOnly !== false
 
   const apiKey = youtubeApiKey.value()
   if (!apiKey) throw new HttpsError('failed-precondition', 'Search is temporarily unavailable.')
@@ -84,7 +88,7 @@ export const searchYoutube = onCall({ secrets: [youtubeApiKey] }, async (request
   const searchUrl = new URL('https://www.googleapis.com/youtube/v3/search')
   searchUrl.searchParams.set('part', 'snippet')
   searchUrl.searchParams.set('type', 'video')
-  searchUrl.searchParams.set('videoCategoryId', '10') // Music
+  if (musicOnly) searchUrl.searchParams.set('videoCategoryId', '10') // Music
   searchUrl.searchParams.set('order', 'relevance')
   searchUrl.searchParams.set('maxResults', String(MAX_RESULTS))
   searchUrl.searchParams.set('q', trimmedQuery)
