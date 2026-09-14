@@ -91,6 +91,22 @@ export function HomePage() {
       .map((c) => c.track)
   }, [recentlyPlayed])
 
+  // "Recently played" should show each track once, at its most recent play — not one row
+  // per individual play event, which stacked up an ever-growing run of the same track every
+  // time it was replayed (user-reported: "every time i listen to the same track it shows
+  // again and again"). recentlyPlayed is already ordered most-recent-first, so keeping only
+  // the first occurrence of each trackId keeps that ordering exactly right.
+  const uniqueRecentlyPlayed = useMemo(() => {
+    const seen = new Set<string>()
+    const unique: TrackDoc[] = []
+    for (const track of recentlyPlayed ?? []) {
+      if (seen.has(track.trackId)) continue
+      seen.add(track.trackId)
+      unique.push(track)
+    }
+    return unique
+  }, [recentlyPlayed])
+
   const recentlyAdded = useMemo(() => {
     return [...(savedTracks ?? [])]
       .sort((a, b) => millis(b.addedAt) - millis(a.addedAt))
@@ -103,7 +119,7 @@ export function HomePage() {
   const firstName = profile?.displayName?.split(' ')[0]
   const isEmpty = loading
     ? false
-    : recentlyPlayed.length === 0 && favorites.length === 0 && playlists.length === 0 && recentlyAdded.length === 0
+    : uniqueRecentlyPlayed.length === 0 && favorites.length === 0 && playlists.length === 0 && recentlyAdded.length === 0
 
   return (
     <div className="flex flex-col gap-12">
@@ -142,7 +158,7 @@ export function HomePage() {
         <>
           <Rail
             title="Recently played"
-            tracks={recentlyPlayed}
+            tracks={uniqueRecentlyPlayed}
             emptyHint="Tracks you play will show up here."
           />
           <Rail

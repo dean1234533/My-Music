@@ -112,10 +112,23 @@ export function LibraryPage() {
     [favorites, trackMap],
   )
 
-  const recentlyPlayed = useMemo(
-    () => (history ?? []).map((h) => trackMap.get(h.trackId)).filter((t): t is TrackDoc => !!t),
-    [history, trackMap],
-  )
+  // One row per track, at its most recent play — not one row per individual play event, which
+  // stacked up an ever-growing run of the same track every time it was replayed (user-reported:
+  // "every time i listen to the same track it shows again and again"). `history` is already
+  // ordered most-recent-first, so keeping only the first occurrence of each trackId keeps that
+  // ordering exactly right.
+  const recentlyPlayed = useMemo(() => {
+    const seen = new Set<string>()
+    const unique: TrackDoc[] = []
+    for (const h of history ?? []) {
+      if (seen.has(h.trackId)) continue
+      const track = trackMap.get(h.trackId)
+      if (!track) continue
+      seen.add(h.trackId)
+      unique.push(track)
+    }
+    return unique
+  }, [history, trackMap])
 
   function sortTracks(tracks: { track: TrackDoc; addedAt: number }[]): TrackDoc[] {
     const copy = [...tracks]
