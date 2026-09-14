@@ -66,7 +66,11 @@ export function PlayerBar() {
       <div className="flex items-center gap-3">
         <div className="flex min-w-0 flex-1 items-center gap-3">
           {/* Official YouTube player mount — this is the actual playback surface, not decoration. Never hidden behind a custom UI, and never nested inside a <button> (would trap the iframe's own interaction). */}
-          <div className="relative h-11 w-20 shrink-0 overflow-hidden rounded-[10px] bg-black ring-1 ring-white/10 sm:h-14 sm:w-24">
+          {/* Sized large enough to comfortably reach Safari's native picture-in-picture
+              control on the video itself (tiny thumbnails make that control too small to
+              tap reliably) — PiP is the one real way iOS keeps this playing while you
+              switch to another app, since backgrounding the tab otherwise pauses it. */}
+          <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-[10px] bg-black ring-1 ring-white/10 sm:h-16 sm:w-16">
             <div ref={attachContainer} className="h-full w-full" />
           </div>
           {currentTrack ? (
