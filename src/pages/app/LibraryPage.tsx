@@ -39,6 +39,19 @@ function millis(ts: unknown): number {
   return t?.toMillis ? t.toMillis() : 0
 }
 
+// YouTube channel names for the same real artist routinely differ — a plain upload
+// channel, an auto-generated "Artist - Topic" channel, and an "ArtistVEVO" channel
+// are all one artist but three different `track.artist` strings, which used to show
+// up as three separate entries in the Artists tab (confirmed live: "Potter Payper",
+// "Potter Payper - Topic", and "PotterPayperVEVO" were three groups for one artist).
+// Stripping these known, exact YouTube suffix conventions merges them back together.
+function stripArtistNoise(artist: string): string {
+  const trimmed = artist.trim()
+  const withoutTopic = trimmed.replace(/\s*-\s*topic$/i, '')
+  const withoutVevo = withoutTopic.replace(/\s*-?\s*vevo$/i, '')
+  return withoutVevo.trim() || trimmed
+}
+
 export function LibraryPage() {
   const { firebaseUser } = useAuth()
   const { notify } = useToast()
@@ -147,15 +160,29 @@ export function LibraryPage() {
   }, [allTracks, sort, filter])
 
   const artistGroups = useMemo(() => {
-    const map = new Map<string, TrackDoc[]>()
+    const map = new Map<string, { tracks: TrackDoc[]; labelCandidates: string[] }>()
     for (const { track } of allTracks) {
-      const key = track.artist.trim().toLowerCase() || 'unknown'
+      const cleaned = stripArtistNoise(track.artist)
+      // Spaces removed too: "PotterPayperVEVO" strips down to "PotterPayper" (no
+      // space to restore, since the source channel name never had one), so the key
+      // has to ignore spacing entirely to still line up with plain "Potter Payper".
+      const key = cleaned.toLowerCase().replace(/\s+/g, '') || 'unknown'
       const existing = map.get(key)
-      if (existing) existing.push(track)
-      else map.set(key, [track])
+      if (existing) {
+        existing.tracks.push(track)
+        existing.labelCandidates.push(cleaned)
+      } else {
+        map.set(key, { tracks: [track], labelCandidates: [cleaned] })
+      }
     }
     return [...map.entries()]
-      .map(([key, tracks]) => ({ key, label: tracks[0].artist.trim() || 'Unknown artist', tracks }))
+      .map(([key, { tracks, labelCandidates }]) => {
+        // Prefer a candidate with real spacing (a plain name, or a "- Topic" strip,
+        // both of which keep the artist's original spacing) over a VEVO-derived one,
+        // which is a concatenated channel name with no space left to restore.
+        const label = labelCandidates.find((l) => l.includes(' ')) || labelCandidates[0] || 'Unknown artist'
+        return { key, label, tracks }
+      })
       .sort((a, b) => a.label.localeCompare(b.label))
   }, [allTracks])
 

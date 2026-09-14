@@ -342,3 +342,43 @@ test('account deletion and data export both include savedTracks alongside the ot
   const exportUserData = read('functions/src/account/exportUserData.ts')
   assert.match(exportUserData, /docsWhere\('savedTracks', 'uid', uid\)/)
 })
+
+// ---------------------------------------------------------------------------
+// The Library "Artists" tab groups saved tracks by `track.artist`, which comes
+// straight from the YouTube channel title. Confirmed against the live
+// database: the same real artist routinely has three different channel-title
+// strings — a plain upload channel, an auto-generated "Artist - Topic"
+// channel, and an "ArtistVEVO" channel — e.g. "Potter Payper",
+// "Potter Payper - Topic", and "PotterPayperVEVO" all showed up as three
+// separate artist groups instead of one. LibraryPage.tsx's stripArtistNoise()
+// strips those two known, exact YouTube suffix conventions before grouping.
+// It's duplicated here (LibraryPage.tsx is a .tsx component, not importable
+// from a plain Node test) — the regex-match assertions keep this copy honest
+// against the real implementation.
+// ---------------------------------------------------------------------------
+
+function stripArtistNoise(artist) {
+  const trimmed = artist.trim()
+  const withoutTopic = trimmed.replace(/\s*-\s*topic$/i, '')
+  const withoutVevo = withoutTopic.replace(/\s*-?\s*vevo$/i, '')
+  return withoutVevo.trim() || trimmed
+}
+
+function artistGroupKey(artist) {
+  return stripArtistNoise(artist).toLowerCase().replace(/\s+/g, '') || 'unknown'
+}
+
+test('stripArtistNoise/artistGroupKey merge "Artist", "Artist - Topic" and "ArtistVEVO" channel-title variants into one artist group', () => {
+  assert.equal(artistGroupKey('Potter Payper'), artistGroupKey('Potter Payper - Topic'))
+  assert.equal(artistGroupKey('Potter Payper'), artistGroupKey('PotterPayperVEVO'))
+  assert.equal(artistGroupKey('Nas - Topic'), artistGroupKey('NasVEVO'))
+  assert.equal(artistGroupKey('MK'), artistGroupKey('MKVEVO'))
+  // Genuinely different artists must not collapse into the same key.
+  assert.notEqual(artistGroupKey('Stormzy'), artistGroupKey('Dappy'))
+
+  const libraryPage = read('src/pages/app/LibraryPage.tsx')
+  assert.match(libraryPage, /function stripArtistNoise\(artist: string\): string \{/)
+  assert.ok(libraryPage.includes(String.raw`replace(/\s*-\s*topic$/i, '')`))
+  assert.ok(libraryPage.includes(String.raw`replace(/\s*-?\s*vevo$/i, '')`))
+  assert.match(libraryPage, /labelCandidates\.find\(\(l\) => l\.includes\(' '\)\)/)
+})
