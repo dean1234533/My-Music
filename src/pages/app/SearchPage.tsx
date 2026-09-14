@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { Check, ListPlus, Plus, Search as SearchIcon } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Check, ChevronDown, ChevronUp, ListPlus, ListMusic, Plus, Search as SearchIcon } from 'lucide-react'
 import { Input } from '@/components/common/Input'
 import { Button } from '@/components/common/Button'
 import { PlaylistPickerModal } from '@/components/music/PlaylistPickerModal'
@@ -8,9 +9,10 @@ import { LoadingState, EmptyState, ErrorState } from '@/components/common/StateV
 import { useToast } from '@/contexts/ToastContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { usePlayer } from '@/contexts/PlayerContext'
-import { searchYoutube, type YoutubeSearchResult } from '@/services/youtubeSearchService'
+import { searchYoutube, importYoutubePlaylist, type YoutubeSearchResult } from '@/services/youtubeSearchService'
 import { getTracks, saveTrack } from '@/services/trackService'
 import { saveToLibrary, subscribeLibrary } from '@/services/libraryService'
+import { createPlaylist, reorderPlaylistTracks } from '@/services/playlistService'
 import { formatDuration } from '@/utils/format'
 import type { TrackDoc } from '@/types/track'
 import type { SavedTrackDoc } from '@/types/savedTrack'
@@ -56,6 +58,7 @@ export function SearchPage() {
   const { notify } = useToast()
   const { firebaseUser } = useAuth()
   const { playTrack } = usePlayer()
+  const navigate = useNavigate()
   const [term, setTerm] = useState('')
   const [results, setResults] = useState<YoutubeSearchResult[] | null>(null)
   const [loading, setLoading] = useState(false)
@@ -70,6 +73,15 @@ export function SearchPage() {
   // user types — see matchesQuery() below.
   const [savedTracks, setSavedTracks] = useState<SavedTrackDoc[] | null>(null)
   const [libraryTrackMap, setLibraryTrackMap] = useState<Map<string, TrackDoc>>(new Map())
+
+  // Whole-album/playlist import — see functions/src/youtubeSearch.ts's importYoutubePlaylist.
+  const [importOpen, setImportOpen] = useState(false)
+  const [playlistUrlInput, setPlaylistUrlInput] = useState('')
+  const [importLoading, setImportLoading] = useState(false)
+  const [importError, setImportError] = useState<string | null>(null)
+  const [importedTitle, setImportedTitle] = useState<string | null>(null)
+  const [importedResults, setImportedResults] = useState<YoutubeSearchResult[] | null>(null)
+  const [bulkBusy, setBulkBusy] = useState(false)
 
   useEffect(() => {
     setRecentSearches(loadRecentSearches())
@@ -178,7 +190,120 @@ export function SearchPage() {
     setRecentSearches([])
   }
 
+  async function handleImport(event: FormEvent) {
+    event.preventDefault()
+    if (!playlistUrlInput.trim()) return
+    setImportLoading(true)
+    setImportError(null)
+    setImportedResults(null)
+    setImportedTitle(null)
+    try {
+      const { playlistTitle, results: found } = await importYoutubePlaylist(playlistUrlInput)
+      setImportedTitle(playlistTitle)
+      setImportedResults(found)
+      if (found.length === 0) setImportError("That playlist doesn't have any playable tracks.")
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : "Couldn't import that playlist. Check the link and try again.")
+    } finally {
+      setImportLoading(false)
+    }
+  }
+
+  async function handleImportAddAllToLibrary() {
+    if (!firebaseUser || !importedResults || bulkBusy) return
+    setBulkBusy(true)
+    try {
+      const toAdd = importedResults.filter((r) => !savedTrackIds.has(r.youtubeVideoId))
+      const tracks = await Promise.all(toAdd.map((r) => saveTrack(resultToSaveInput(r))))
+      await Promise.all(tracks.map((t) => saveToLibrary(firebaseUser.uid, t.trackId)))
+      notify(
+        toAdd.length === 0
+          ? 'Every track from this playlist is already in your library.'
+          : `Added ${toAdd.length} ${toAdd.length === 1 ? 'track' : 'tracks'} to your library.`,
+      )
+    } catch {
+      notify('Could not add all tracks. Please try again.', 'error')
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
+  async function handleImportCreatePlaylist() {
+    if (!firebaseUser || !importedResults || importedResults.length === 0 || bulkBusy) return
+    setBulkBusy(true)
+    try {
+      const tracks = await Promise.all(importedResults.map((r) => saveTrack(resultToSaveInput(r))))
+      const title = importedTitle?.trim() || 'Imported playlist'
+      const playlistId = await createPlaylist(firebaseUser.uid, title)
+      await reorderPlaylistTracks(playlistId, tracks.map((t) => t.trackId))
+      notify(`Created “${title}” with ${tracks.length} ${tracks.length === 1 ? 'track' : 'tracks'}.`)
+      navigate(`/app/playlists/${playlistId}`)
+    } catch {
+      notify('Could not create the playlist. Please try again.', 'error')
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
   const showYoutubeSection = results !== null || loading || error !== null
+
+  function renderResultRow(result: YoutubeSearchResult) {
+    const alreadySaved = savedTrackIds.has(result.youtubeVideoId)
+    return (
+      <div
+        key={result.youtubeVideoId}
+        className="flex items-center gap-3 rounded-xl border border-white/[0.07] bg-white/[0.02] p-3"
+      >
+        <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-surface-3">
+          {result.thumbnail ? <img src={result.thumbnail} alt="" className="h-full w-full object-cover" /> : null}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <p className="truncate text-sm font-semibold text-ink-0">{result.title}</p>
+            {result.isLive ? (
+              <span className="shrink-0 rounded-full bg-danger-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-danger-500">
+                Live
+              </span>
+            ) : null}
+          </div>
+          <p className="truncate text-xs text-ink-3">
+            {result.channelTitle}
+            {result.durationSeconds ? ` · ${formatDuration(result.durationSeconds)}` : ''}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => void handlePlay(result)}
+            loading={pendingAction === `play:${result.youtubeVideoId}`}
+          >
+            Play
+          </Button>
+          <button
+            type="button"
+            onClick={() => void handleAddToLibrary(result)}
+            disabled={pendingAction !== null || alreadySaved}
+            aria-label={alreadySaved ? 'Already in your library' : 'Add to library'}
+            title={alreadySaved ? 'Already in your library' : 'Add to library'}
+            className="grid h-9 w-9 place-items-center rounded-full border border-white/[0.08] bg-black/25 text-ink-1 transition hover:bg-white/[0.09] hover:text-ink-0 disabled:opacity-50"
+          >
+            {alreadySaved ? <Check size={18} className="text-brand-400" /> : <Plus size={18} />}
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleAddToPlaylist(result)}
+            disabled={pendingAction !== null}
+            aria-label="Add to playlist"
+            title="Add to playlist"
+            className="grid h-9 w-9 place-items-center rounded-full border border-white/[0.08] bg-black/25 text-ink-1 transition hover:bg-white/[0.09] hover:text-ink-0 disabled:opacity-50"
+          >
+            <ListPlus size={18} />
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col gap-8">
@@ -194,6 +319,57 @@ export function SearchPage() {
             autoFocus
           />
         </form>
+        <button
+          type="button"
+          onClick={() => setImportOpen((v) => !v)}
+          className="mt-3 flex items-center gap-1.5 text-xs font-medium text-ink-3 hover:text-ink-1"
+        >
+          <ListMusic size={14} />
+          Import a whole album or playlist from YouTube
+          {importOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
+
+        {importOpen ? (
+          <div className="mt-3 rounded-xl border border-white/[0.08] bg-white/[0.02] p-4">
+            <form onSubmit={handleImport} className="flex flex-col gap-2 sm:flex-row">
+              <Input
+                value={playlistUrlInput}
+                onChange={(e) => setPlaylistUrlInput(e.target.value)}
+                placeholder="Paste a YouTube playlist/album link…"
+                className="flex-1"
+              />
+              <Button type="submit" loading={importLoading} disabled={!playlistUrlInput.trim()}>
+                Import
+              </Button>
+            </form>
+            <p className="mt-2 text-xs text-ink-3">
+              Most official albums are uploaded to YouTube as a playlist — paste its link (not a single video)
+              to pull in every track at once, then review before adding anything.
+            </p>
+
+            {importLoading ? <LoadingState label="Fetching playlist…" /> : null}
+            {importError ? <p className="mt-3 text-sm text-danger-500">{importError}</p> : null}
+
+            {importedResults && importedResults.length > 0 ? (
+              <div className="mt-4 flex flex-col gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-medium text-ink-0">
+                    {importedTitle} <span className="text-ink-3">({importedResults.length} tracks)</span>
+                  </p>
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="secondary" onClick={() => void handleImportAddAllToLibrary()} loading={bulkBusy}>
+                      Add all to library
+                    </Button>
+                    <Button size="sm" onClick={() => void handleImportCreatePlaylist()} loading={bulkBusy}>
+                      Create playlist
+                    </Button>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-2">{importedResults.map(renderResultRow)}</div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       {libraryMatches.length > 0 ? (
@@ -246,65 +422,7 @@ export function SearchPage() {
           ) : results && results.length === 0 ? (
             <EmptyState title="No results" description="Try a different search term." />
           ) : (
-            <div className="flex flex-col gap-2">
-              {(results ?? []).map((result) => {
-                const alreadySaved = savedTrackIds.has(result.youtubeVideoId)
-                return (
-                  <div
-                    key={result.youtubeVideoId}
-                    className="flex items-center gap-3 rounded-xl border border-white/[0.07] bg-white/[0.02] p-3"
-                  >
-                    <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-surface-3">
-                      {result.thumbnail ? <img src={result.thumbnail} alt="" className="h-full w-full object-cover" /> : null}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <p className="truncate text-sm font-semibold text-ink-0">{result.title}</p>
-                        {result.isLive ? (
-                          <span className="shrink-0 rounded-full bg-danger-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-danger-500">
-                            Live
-                          </span>
-                        ) : null}
-                      </div>
-                      <p className="truncate text-xs text-ink-3">
-                        {result.channelTitle}
-                        {result.durationSeconds ? ` · ${formatDuration(result.durationSeconds)}` : ''}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => void handlePlay(result)}
-                        loading={pendingAction === `play:${result.youtubeVideoId}`}
-                      >
-                        Play
-                      </Button>
-                      <button
-                        type="button"
-                        onClick={() => void handleAddToLibrary(result)}
-                        disabled={pendingAction !== null || alreadySaved}
-                        aria-label={alreadySaved ? 'Already in your library' : 'Add to library'}
-                        title={alreadySaved ? 'Already in your library' : 'Add to library'}
-                        className="grid h-9 w-9 place-items-center rounded-full border border-white/[0.08] bg-black/25 text-ink-1 transition hover:bg-white/[0.09] hover:text-ink-0 disabled:opacity-50"
-                      >
-                        {alreadySaved ? <Check size={18} className="text-brand-400" /> : <Plus size={18} />}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleAddToPlaylist(result)}
-                        disabled={pendingAction !== null}
-                        aria-label="Add to playlist"
-                        title="Add to playlist"
-                        className="grid h-9 w-9 place-items-center rounded-full border border-white/[0.08] bg-black/25 text-ink-1 transition hover:bg-white/[0.09] hover:text-ink-0 disabled:opacity-50"
-                      >
-                        <ListPlus size={18} />
-                      </button>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
+            <div className="flex flex-col gap-2">{(results ?? []).map(renderResultRow)}</div>
           )}
         </div>
       ) : null}

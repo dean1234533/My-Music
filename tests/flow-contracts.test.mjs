@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
   canonicalYoutubeUrl,
+  extractYoutubePlaylistId,
   extractYoutubeVideoId,
   isValidYoutubeVideoId,
   youtubeEmbedUrl,
@@ -62,6 +63,46 @@ test('extractYoutubeVideoId rejects unsupported/invalid input rather than guessi
   ]
   for (const input of invalid) {
     assert.equal(extractYoutubeVideoId(input), null, `should reject ${input}`)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// extractYoutubePlaylistId — the "add a whole album" entry point. Playlist
+// IDs have no fixed length/prefix, unlike video IDs, so acceptance is
+// deliberately looser; real confirmation happens server-side against the
+// YouTube Data API in functions/src/youtubeSearch.ts's importYoutubePlaylist.
+// ---------------------------------------------------------------------------
+
+const VALID_PLAYLIST_ID = 'OLAK5uy_lZE1_examplePlaylist12'
+
+test('extractYoutubePlaylistId accepts playlist URLs, watch-with-list URLs, and a bare pasted ID', () => {
+  const urls = [
+    `https://www.youtube.com/playlist?list=${VALID_PLAYLIST_ID}`,
+    `https://youtube.com/playlist?list=${VALID_PLAYLIST_ID}`,
+    `https://music.youtube.com/playlist?list=${VALID_PLAYLIST_ID}`,
+    `https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=${VALID_PLAYLIST_ID}`,
+    `https://www.youtube.com/watch?list=${VALID_PLAYLIST_ID}&v=dQw4w9WgXcQ`,
+    VALID_PLAYLIST_ID,
+    `  ${VALID_PLAYLIST_ID}  `,
+  ]
+  for (const input of urls) {
+    assert.equal(extractYoutubePlaylistId(input), VALID_PLAYLIST_ID, `failed for ${input}`)
+  }
+})
+
+test('extractYoutubePlaylistId rejects unsupported/invalid input rather than guessing', () => {
+  const invalid = [
+    '',
+    '   ',
+    'not a url at all',
+    'too-short',
+    `https://vimeo.com/12345678`,
+    `https://www.youtube.com/watch?v=dQw4w9WgXcQ`, // a plain video URL with no list= param
+    `javascript:alert(1)//${VALID_PLAYLIST_ID}`,
+    `https://www.youtube.com.evil.com/playlist?list=${VALID_PLAYLIST_ID}`,
+  ]
+  for (const input of invalid) {
+    assert.equal(extractYoutubePlaylistId(input), null, `should reject ${input}`)
   }
 })
 

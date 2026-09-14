@@ -11,6 +11,7 @@ export interface YoutubeSearchResult {
 }
 
 const searchYoutubeCallable = callable<{ query: string }, { results: YoutubeSearchResult[] }>('searchYoutube')
+const importYoutubePlaylistCallable = callable<{ playlistUrl: string }, { playlistTitle: string; results: YoutubeSearchResult[] }>('importYoutubePlaylist')
 
 const CACHE_TTL_MS = 5 * 60 * 1000
 const cache = new Map<string, { results: YoutubeSearchResult[]; expiresAt: number }>()
@@ -33,4 +34,14 @@ export async function searchYoutube(rawQuery: string): Promise<YoutubeSearchResu
   const { results } = await searchYoutubeCallable({ query })
   cache.set(query, { results, expiresAt: Date.now() + CACHE_TTL_MS })
   return results
+}
+
+/**
+ * Imports every track from a YouTube playlist — the practical way to add a
+ * whole album at once, since the public YouTube Data API has no separate
+ * "album" search. Returns metadata only, for review before adding anything;
+ * never auto-saves to a library/playlist itself.
+ */
+export async function importYoutubePlaylist(playlistUrl: string): Promise<{ playlistTitle: string; results: YoutubeSearchResult[] }> {
+  return importYoutubePlaylistCallable({ playlistUrl: playlistUrl.trim() })
 }

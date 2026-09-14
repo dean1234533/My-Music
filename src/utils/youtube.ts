@@ -35,6 +35,31 @@ export function isValidYoutubeVideoId(id: string): boolean {
   return VIDEO_ID_PATTERN.test(id)
 }
 
+// Unlike video IDs, YouTube playlist IDs have no single fixed length/prefix
+// (PL..., OLAK5uy_... for albums, RD... for mixes, UU... for uploads, etc.),
+// so validation here is deliberately loose — real confirmation that a given
+// ID is a real, readable playlist happens server-side when the import
+// Cloud Function actually calls the YouTube Data API with it.
+const PLAYLIST_ID_PATTERN = /^[A-Za-z0-9_-]{10,64}$/
+
+const PLAYLIST_URL_PATTERNS: RegExp[] = [
+  // youtube.com/playlist?list=ID (with any other query params)
+  /^https?:\/\/(?:www\.|music\.)?youtube\.com\/playlist\?(?:.*&)?list=([A-Za-z0-9_-]{10,64})(?:&.*)?$/,
+  // youtube.com/watch?v=...&list=ID — a video played from within a playlist
+  /^https?:\/\/(?:www\.|m\.|music\.)?youtube\.com\/watch\?(?:.*&)?list=([A-Za-z0-9_-]{10,64})(?:&.*)?$/,
+]
+
+/** Extracts a playlist ID from a pasted YouTube playlist/album URL, or accepts a bare ID pasted directly. Returns null if neither shape matches. */
+export function extractYoutubePlaylistId(input: string): string | null {
+  const trimmed = input.trim()
+  if (!trimmed) return null
+  for (const pattern of PLAYLIST_URL_PATTERNS) {
+    const match = trimmed.match(pattern)
+    if (match?.[1]) return match[1]
+  }
+  return PLAYLIST_ID_PATTERN.test(trimmed) ? trimmed : null
+}
+
 /** Canonical, shareable watch URL — always rebuilt from the validated ID, never the artist's original pasted URL. */
 export function canonicalYoutubeUrl(videoId: string): string {
   return `https://www.youtube.com/watch?v=${videoId}`
