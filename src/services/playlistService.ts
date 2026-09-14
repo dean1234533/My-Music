@@ -5,6 +5,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
@@ -14,7 +15,9 @@ import {
   where,
 } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
+import { artistGroupKey, stripArtistNoise } from '@/utils/artist'
 import type { PlaylistDoc } from '@/types/playlist'
+import type { TrackDoc } from '@/types/track'
 
 function playlistRef(playlistId: string) {
   return doc(db, 'playlists', playlistId)
@@ -77,4 +80,38 @@ export async function reorderPlaylistTracks(playlistId: string, trackIds: string
 
 export async function deletePlaylist(playlistId: string): Promise<void> {
   await deleteDoc(playlistRef(playlistId))
+}
+
+/**
+ * Every artist gets one always-up-to-date playlist of everything by them in the
+ * user's library — saving a track by an artist for the first time creates that
+ * playlist, saving another by the same artist adds to it. Matched by
+ * `autoArtistKey` (the same normalized grouping key as the Library "Artists"
+ * tab, src/utils/artist.ts) rather than by title, so a later manual rename
+ * doesn't create a duplicate. Removing a track the user doesn't want stays a
+ * manual action via the normal playlist "remove" button — this only ever adds.
+ */
+export async function ensureArtistPlaylist(uid: string, track: TrackDoc): Promise<void> {
+  const key = artistGroupKey(track.artist)
+  const existingSnap = await getDocs(
+    query(collection(db, 'playlists'), where('ownerId', '==', uid), where('autoArtistKey', '==', key)),
+  )
+  if (existingSnap.empty) {
+    const playlistId = newPlaylistId()
+    await setDoc(playlistRef(playlistId), {
+      playlistId,
+      ownerId: uid,
+      title: stripArtistNoise(track.artist) || 'Unknown artist',
+      trackIds: [track.trackId],
+      autoArtistKey: key,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    })
+    return
+  }
+  const existing = existingSnap.docs[0]
+  const data = existing.data() as PlaylistDoc
+  if (!data.trackIds.includes(track.trackId)) {
+    await updateDoc(existing.ref, { trackIds: arrayUnion(track.trackId), updatedAt: serverTimestamp() })
+  }
 }

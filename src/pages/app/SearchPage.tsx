@@ -195,7 +195,7 @@ export function SearchPage() {
     setPendingAction(`library:${result.youtubeVideoId}`)
     try {
       const track = await saveTrack(resultToSaveInput(result))
-      await saveToLibrary(firebaseUser.uid, track.trackId)
+      await saveToLibrary(firebaseUser.uid, track)
       notify(`Added “${track.title}” to your library.`)
     } catch {
       notify('Could not add this track. Please try again.', 'error')
@@ -250,7 +250,7 @@ export function SearchPage() {
     try {
       const toAdd = importedResults.filter((r) => !savedTrackIds.has(r.youtubeVideoId))
       const tracks = await Promise.all(toAdd.map((r) => saveTrack(resultToSaveInput(r))))
-      await Promise.all(tracks.map((t) => saveToLibrary(firebaseUser.uid, t.trackId)))
+      await Promise.all(tracks.map((t) => saveToLibrary(firebaseUser.uid, t)))
       notify(
         toAdd.length === 0
           ? 'Every track from this playlist is already in your library.'
@@ -321,7 +321,7 @@ export function SearchPage() {
     setPasteActionBusy(true)
     try {
       const tracks = await Promise.all(matched.map((r) => saveTrack(resultToSaveInput(r))))
-      await Promise.all(tracks.map((t) => saveToLibrary(firebaseUser.uid, t.trackId)))
+      await Promise.all(tracks.map((t) => saveToLibrary(firebaseUser.uid, t)))
       notify(`Added ${tracks.length} ${tracks.length === 1 ? 'track' : 'tracks'} to your library.`)
     } catch {
       notify('Could not add all tracks. Please try again.', 'error')

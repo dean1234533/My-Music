@@ -1,6 +1,8 @@
 import { collection, deleteDoc, doc, getDoc, onSnapshot, query, serverTimestamp, setDoc, where } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
+import { ensureArtistPlaylist } from '@/services/playlistService'
 import type { SavedTrackDoc } from '@/types/savedTrack'
+import type { TrackDoc } from '@/types/track'
 
 function savedTrackRef(uid: string, trackId: string) {
   return doc(db, 'savedTracks', `${uid}_${trackId}`)
@@ -18,8 +20,16 @@ export async function isInLibrary(uid: string, trackId: string): Promise<boolean
   return snap.exists()
 }
 
-export async function saveToLibrary(uid: string, trackId: string): Promise<void> {
-  await setDoc(savedTrackRef(uid, trackId), { uid, trackId, addedAt: serverTimestamp() })
+/**
+ * Also ensures the track's artist has an up-to-date playlist of everything by
+ * them (see playlistService.ensureArtistPlaylist) — every track saved to the
+ * library should always be reachable from its artist's playlist too; tracks
+ * the user doesn't want are removed from there manually, the same as any
+ * other playlist.
+ */
+export async function saveToLibrary(uid: string, track: TrackDoc): Promise<void> {
+  await setDoc(savedTrackRef(uid, track.trackId), { uid, trackId: track.trackId, addedAt: serverTimestamp() })
+  await ensureArtistPlaylist(uid, track)
 }
 
 /**

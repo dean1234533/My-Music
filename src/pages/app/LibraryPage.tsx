@@ -9,6 +9,7 @@ import { subscribeRecentlyPlayed } from '@/services/historyService'
 import { removeFromLibrary, subscribeLibrary } from '@/services/libraryService'
 import { getTracks } from '@/services/trackService'
 import { usePlayer } from '@/contexts/PlayerContext'
+import { stripArtistNoise } from '@/utils/artist'
 import { TrackCard } from '@/components/music/TrackCard'
 import { Input } from '@/components/common/Input'
 import { EmptyState, LoadingState } from '@/components/common/StateViews'
@@ -37,19 +38,6 @@ const SORT_OPTIONS: { id: SortOrder; label: string }[] = [
 function millis(ts: unknown): number {
   const t = ts as { toMillis?: () => number } | null
   return t?.toMillis ? t.toMillis() : 0
-}
-
-// YouTube channel names for the same real artist routinely differ — a plain upload
-// channel, an auto-generated "Artist - Topic" channel, and an "ArtistVEVO" channel
-// are all one artist but three different `track.artist` strings, which used to show
-// up as three separate entries in the Artists tab (confirmed live: "Potter Payper",
-// "Potter Payper - Topic", and "PotterPayperVEVO" were three groups for one artist).
-// Stripping these known, exact YouTube suffix conventions merges them back together.
-function stripArtistNoise(artist: string): string {
-  const trimmed = artist.trim()
-  const withoutTopic = trimmed.replace(/\s*-\s*topic$/i, '')
-  const withoutVevo = withoutTopic.replace(/\s*-?\s*vevo$/i, '')
-  return withoutVevo.trim() || trimmed
 }
 
 export function LibraryPage() {

@@ -10,6 +10,7 @@ import {
   youtubeThumbnailUrl,
 } from '../src/utils/youtube.ts'
 import { formatCount, formatDuration } from '../src/utils/format.ts'
+import { artistGroupKey, stripArtistNoise } from '../src/utils/artist.ts'
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
 
@@ -238,10 +239,31 @@ test('settingsService.getSettings merges DEFAULT_SETTINGS under a partial settin
 
 test('libraryService.saveToLibrary/removeFromLibrary/isInLibrary all key off the same owner-scoped doc ID as the rules expect', () => {
   const libraryService = read('src/services/libraryService.ts')
-  assert.match(libraryService, /export async function saveToLibrary\(uid: string, trackId: string\)/)
+  assert.match(libraryService, /export async function saveToLibrary\(uid: string, track: TrackDoc\)/)
   assert.match(libraryService, /export async function removeFromLibrary\(uid: string, trackId: string\)/)
   assert.match(libraryService, /export async function isInLibrary\(uid: string, trackId: string\)/)
   assert.match(libraryService, /where\('uid', '==', uid\)/)
+})
+
+// ---------------------------------------------------------------------------
+// Every artist should always have an up-to-date playlist of everything by
+// them in the library — saving a track by an artist for the first time
+// creates that playlist, saving another by the same artist adds to it.
+// Tracks the user doesn't want are removed manually via the normal playlist
+// "remove" button, same as any other playlist — this service only ever adds.
+// ---------------------------------------------------------------------------
+
+test('saveToLibrary always calls ensureArtistPlaylist, which matches an existing artist playlist by the normalized autoArtistKey (not by title) so a later rename never causes a duplicate', () => {
+  const libraryService = read('src/services/libraryService.ts')
+  assert.match(libraryService, /await ensureArtistPlaylist\(uid, track\)/)
+
+  const playlistService = read('src/services/playlistService.ts')
+  assert.match(playlistService, /export async function ensureArtistPlaylist\(uid: string, track: TrackDoc\)/)
+  assert.match(playlistService, /where\('ownerId', '==', uid\), where\('autoArtistKey', '==', key\)/)
+  // A brand-new artist playlist must record autoArtistKey so it can be found again by key.
+  assert.match(playlistService, /autoArtistKey: key,/)
+  // Adding a track already in the playlist must not duplicate it.
+  assert.match(playlistService, /if \(!data\.trackIds\.includes\(track\.trackId\)\)/)
 })
 
 // ---------------------------------------------------------------------------
@@ -372,31 +394,23 @@ test('account deletion and data export both include savedTracks alongside the ot
 })
 
 // ---------------------------------------------------------------------------
-// The Library "Artists" tab groups saved tracks by `track.artist`, which comes
-// straight from the YouTube channel title. Confirmed against the live
-// database: the same real artist routinely has three different channel-title
-// strings — a plain upload channel, an auto-generated "Artist - Topic"
-// channel, and an "ArtistVEVO" channel — e.g. "Potter Payper",
-// "Potter Payper - Topic", and "PotterPayperVEVO" all showed up as three
-// separate artist groups instead of one. LibraryPage.tsx's stripArtistNoise()
-// strips those two known, exact YouTube suffix conventions before grouping.
-// It's duplicated here (LibraryPage.tsx is a .tsx component, not importable
-// from a plain Node test) — the regex-match assertions keep this copy honest
-// against the real implementation.
+// The Library "Artists" tab, and each artist's auto-maintained playlist, both
+// group tracks by `track.artist`, which comes straight from the YouTube
+// channel title. Confirmed against the live database: the same real artist
+// routinely has several different channel-title strings — a plain upload
+// channel, an auto-generated "Artist - Topic" channel, an "ArtistVEVO"
+// channel — e.g. "Potter Payper", "Potter Payper - Topic", and
+// "PotterPayperVEVO" all showed up as three separate artist groups instead
+// of one. src/utils/artist.ts strips those two known, exact YouTube suffix
+// conventions before grouping, shared by both features so they can never
+// disagree on what counts as "the same artist".
 // ---------------------------------------------------------------------------
 
-function stripArtistNoise(artist) {
-  const trimmed = artist.trim()
-  const withoutTopic = trimmed.replace(/\s*-\s*topic$/i, '')
-  const withoutVevo = withoutTopic.replace(/\s*-?\s*vevo$/i, '')
-  return withoutVevo.trim() || trimmed
-}
-
-function artistGroupKey(artist) {
-  return stripArtistNoise(artist).toLowerCase().replace(/\s+/g, '') || 'unknown'
-}
-
 test('stripArtistNoise/artistGroupKey merge "Artist", "Artist - Topic" and "ArtistVEVO" channel-title variants into one artist group', () => {
+  assert.equal(stripArtistNoise('Potter Payper - Topic'), 'Potter Payper')
+  assert.equal(stripArtistNoise('NasVEVO'), 'Nas')
+  assert.equal(stripArtistNoise('Stormzy'), 'Stormzy')
+
   assert.equal(artistGroupKey('Potter Payper'), artistGroupKey('Potter Payper - Topic'))
   assert.equal(artistGroupKey('Potter Payper'), artistGroupKey('PotterPayperVEVO'))
   assert.equal(artistGroupKey('Nas - Topic'), artistGroupKey('NasVEVO'))
@@ -405,8 +419,5 @@ test('stripArtistNoise/artistGroupKey merge "Artist", "Artist - Topic" and "Arti
   assert.notEqual(artistGroupKey('Stormzy'), artistGroupKey('Dappy'))
 
   const libraryPage = read('src/pages/app/LibraryPage.tsx')
-  assert.match(libraryPage, /function stripArtistNoise\(artist: string\): string \{/)
-  assert.ok(libraryPage.includes(String.raw`replace(/\s*-\s*topic$/i, '')`))
-  assert.ok(libraryPage.includes(String.raw`replace(/\s*-?\s*vevo$/i, '')`))
   assert.match(libraryPage, /labelCandidates\.find\(\(l\) => l\.includes\(' '\)\)/)
 })
