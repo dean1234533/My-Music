@@ -1,17 +1,7 @@
 import type { User } from 'firebase/auth'
-import {
-  arrayRemove,
-  doc,
-  getDoc,
-  onSnapshot,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-} from 'firebase/firestore'
+import { doc, getDoc, onSnapshot, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
-import type { UserProfile, UserRole } from '@/types/user'
-
-const ONBOARDING_ROLES: UserRole[] = ['fan', 'artist', 'dj']
+import type { UserProfile } from '@/types/user'
 
 function userRef(uid: string) {
   return doc(db, 'users', uid)
@@ -23,9 +13,7 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * Creates the Firestore user document the first time someone signs in, if the
- * auth-trigger Cloud Function hasn't already created it. Only ever writes
- * safe defaults — roles/subscriptionStatus can't be escalated this way
- * because Firestore rules pin their values on create.
+ * auth-trigger Cloud Function hasn't already created it.
  *
  * Right after sign-in resolves, the Firestore SDK's auth-token listener can
  * briefly lag behind Firebase Auth. A forced token refresh plus bounded retry
@@ -46,10 +34,6 @@ export async function ensureUserDocument(user: User): Promise<void> {
         displayName: user.displayName ?? null,
         email: user.email ?? null,
         photoURL: user.photoURL ?? null,
-        roles: [] as UserRole[],
-        onboardingComplete: false,
-        subscriptionStatus: 'none',
-        notificationPreferences: { email: true, inApp: true },
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       })
@@ -84,43 +68,6 @@ export function subscribeToUserProfile(
   )
 }
 
-/**
- * `preserveAdmin` matters for the rare case of an account that had `admin`
- * added directly in Firestore (e.g. bootstrapping the very first admin)
- * before it ever completed onboarding: firestore.rules' users/{userId}
- * update rule has no branch that permits dropping 'admin' from roles, so a
- * plain overwrite with just the picked role would be denied outright —
- * this keeps 'admin' in the write whenever the account already has it,
- * satisfying that rule's admin branch instead of colliding with it.
- */
-export async function completeOnboarding(uid: string, roles: UserRole[], preserveAdmin = false): Promise<void> {
-  const safeRoles = roles.filter((role): role is UserRole => ONBOARDING_ROLES.includes(role))
-  await updateDoc(userRef(uid), {
-    roles: preserveAdmin ? [...safeRoles, 'admin' as UserRole] : safeRoles,
-    onboardingComplete: true,
-    updatedAt: serverTimestamp(),
-  })
-}
-
-/**
- * Steps back from a role — never grants 'admin' or removes it (Firestore
- * rules block both regardless), so this is safe to expose as a self-service
- * action even on an admin account. Doesn't touch or delete the underlying
- * artistProfiles/djProfiles doc: removing 'artist'/'dj' just makes that
- * profile stop being publicly readable (see firestore.rules'
- * roleActiveFor) until the role is added back via the add-role flow, at
- * which point the same profile reappears exactly as it was.
- */
-export async function removeRole(uid: string, role: Exclude<UserRole, 'admin'>): Promise<void> {
-  await updateDoc(userRef(uid), {
-    roles: arrayRemove(role),
-    updatedAt: serverTimestamp(),
-  })
-}
-
-export async function updateBasicProfile(
-  uid: string,
-  data: Partial<Pick<UserProfile, 'displayName' | 'photoURL' | 'notificationPreferences'>>,
-): Promise<void> {
+export async function updateBasicProfile(uid: string, data: Partial<Pick<UserProfile, 'displayName' | 'photoURL'>>): Promise<void> {
   await updateDoc(userRef(uid), { ...data, updatedAt: serverTimestamp() })
 }

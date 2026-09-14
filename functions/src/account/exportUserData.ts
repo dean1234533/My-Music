@@ -10,62 +10,32 @@ async function docsWhere(collection: string, field: string, uid: string) {
 }
 
 /**
- * Produces a one-off JSON export of the caller's own account data, uploaded
+ * Produces a one-off JSON export of the caller's own library data, uploaded
  * to a private Storage path only this function can generate a signed URL
  * for (storage.rules blocks direct client reads/writes of exports/ entirely).
- * Deliberately excludes Stripe secrets, other users' private data, and
- * internal moderation notes — only the requesting user's own records.
  */
 export const exportUserData = onCall(async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required.')
   const uid = request.auth.uid
 
-  const [userDoc, artistProfile, djProfile] = await Promise.all([
-    db.collection('users').doc(uid).get(),
-    db.collection('artistProfiles').doc(uid).get(),
-    db.collection('djProfiles').doc(uid).get(),
-  ])
+  const userDoc = await db.collection('users').doc(uid).get()
+  const settingsDoc = await db.collection('settings').doc(uid).get()
 
-  const [
-    tracks,
-    playlists,
-    crates,
-    djDeals,
-    requestsAsDj,
-    requestsAsArtist,
-    agreementsAsDj,
-    agreementsAsArtist,
-    downloadLogs,
-    notifications,
-    legalAcceptances,
-  ] = await Promise.all([
-    docsWhere('tracks', 'artistId', uid),
+  const [playlists, favorites, savedTracks, playHistory] = await Promise.all([
     docsWhere('playlists', 'ownerId', uid),
-    docsWhere('crates', 'ownerId', uid),
-    docsWhere('djDeals', 'artistId', uid),
-    docsWhere('licenceRequests', 'djId', uid),
-    docsWhere('licenceRequests', 'artistId', uid),
-    docsWhere('licenceAgreements', 'djId', uid),
-    docsWhere('licenceAgreements', 'artistId', uid),
-    docsWhere('downloadLogs', 'djId', uid),
-    docsWhere('notifications', 'userId', uid),
-    docsWhere('legalAcceptances', 'userId', uid),
+    docsWhere('favorites', 'uid', uid),
+    docsWhere('savedTracks', 'uid', uid),
+    docsWhere('playHistory', 'uid', uid),
   ])
 
   const exportPayload = {
     exportedAt: new Date().toISOString(),
     account: userDoc.exists ? userDoc.data() : null,
-    artistProfile: artistProfile.exists ? artistProfile.data() : null,
-    djProfile: djProfile.exists ? djProfile.data() : null,
-    tracks,
+    settings: settingsDoc.exists ? settingsDoc.data() : null,
     playlists,
-    crates,
-    djDeals,
-    licenceRequests: [...requestsAsDj, ...requestsAsArtist],
-    licenceAgreements: [...agreementsAsDj, ...agreementsAsArtist],
-    downloadLogs,
-    notifications,
-    legalAcceptances,
+    favorites,
+    savedTracks,
+    playHistory,
   }
 
   const path = `exports/${uid}/${Date.now()}.json`

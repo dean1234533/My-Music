@@ -10,7 +10,7 @@ import { useSeo } from '@/lib/seo'
 export function ForgotPasswordPage() {
   useSeo({
     title: 'Reset Your Password',
-    description: 'Request a password reset email for your BackTheVibes account.',
+    description: 'Request a password reset email for your My Music account.',
     path: '/forgot-password',
   })
   const [email, setEmail] = useState('')

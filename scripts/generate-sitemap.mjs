@@ -1,48 +1,24 @@
-// Regenerates public/sitemap.xml from the static routes plus current blog
-// slugs, so a new blog post automatically appears in the next build's
-// sitemap without a manual edit here. Run as part of `npm run build`.
+// Regenerates public/sitemap.xml from the static public routes. Run as part
+// of `npm run build`. The app itself (/app/*) is behind sign-in, so it isn't
+// listed here — a signed-out crawler can't reach it anyway.
 import { writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
-import { BLOG_POSTS } from '../src/content/blog.ts'
 
-const SITE_URL = 'https://backthevibes.com'
+const SITE_URL = 'https://mymusic.app'
 
 const STATIC_ROUTES = [
   { path: '/', priority: '1.0' },
-  { path: '/pricing', priority: '0.8' },
-  { path: '/for-djs', priority: '0.8' },
-  { path: '/for-artists', priority: '0.8' },
-  { path: '/tools', priority: '0.8' },
-  { path: '/tools/release-planner', priority: '0.8' },
-  { path: '/tools/artist-bio-generator', priority: '0.8' },
-  { path: '/tools/dj-licence-request', priority: '0.8' },
-  { path: '/tools/dj-name-generator', priority: '0.7' },
-  { path: '/tools/song-title-generator', priority: '0.7' },
-  { path: '/tools/royalty-calculator', priority: '0.8' },
-  { path: '/tools/bpm-key-finder', priority: '0.7' },
-  { path: '/tools/playlist-pitch-template', priority: '0.7' },
-  { path: '/tools/social-caption-generator', priority: '0.7' },
-  { path: '/tools/dj-setlist-planner', priority: '0.7' },
-  { path: '/tools/music-genre-guide', priority: '0.7' },
-  { path: '/blog', priority: '0.7' },
-  { path: '/terms', priority: '0.3' },
-  { path: '/privacy', priority: '0.3' },
-  { path: '/copyright', priority: '0.3' },
   { path: '/sign-in', priority: '0.2' },
   { path: '/sign-up', priority: '0.4' },
 ]
 
-const blogRoutes = BLOG_POSTS.map((post) => ({ path: `/blog/${post.slug}`, priority: '0.6', lastmod: post.date }))
-
-const urls = [...STATIC_ROUTES, ...blogRoutes]
-
 const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${urls
+${STATIC_ROUTES
   .map(
     (u) =>
-      `  <url>\n    <loc>${SITE_URL}${u.path}</loc>\n${u.lastmod ? `    <lastmod>${u.lastmod}</lastmod>\n` : ''}    <priority>${u.priority}</priority>\n  </url>`,
+      `  <url>\n    <loc>${SITE_URL}${u.path}</loc>\n    <priority>${u.priority}</priority>\n  </url>`,
   )
   .join('\n')}
 </urlset>
@@ -50,4 +26,4 @@ ${urls
 
 const outPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public', 'sitemap.xml')
 await writeFile(outPath, xml)
-console.log(`sitemap.xml written with ${urls.length} URLs`)
+console.log(`sitemap.xml written with ${STATIC_ROUTES.length} URLs`)

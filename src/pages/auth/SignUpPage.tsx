@@ -13,19 +13,13 @@ import { useSeo } from '@/lib/seo'
 export function SignUpPage() {
   useSeo({
     title: 'Sign Up',
-    description: 'Create a free BackTheVibes account to discover independent music, support artists directly, or publish your own tracks and DJ licensing terms.',
+    description: 'Create a free My Music account to search YouTube, save tracks to your library, and build playlists.',
     path: '/sign-up',
   })
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const requestedRole = ['fan', 'artist', 'dj'].includes(searchParams.get('role') ?? '')
-    ? searchParams.get('role')
-    : null
   const returnToParam = searchParams.get('returnTo')
-  const nextQuery = new URLSearchParams()
-  if (requestedRole) nextQuery.set('role', requestedRole)
-  if (isSafeReturnPath(returnToParam)) nextQuery.set('returnTo', returnToParam)
-  const roleQuery = nextQuery.size > 0 ? `?${nextQuery.toString()}` : ''
+  const redirectTo = isSafeReturnPath(returnToParam) ? returnToParam : '/app/home'
   const [displayName, setDisplayName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -43,7 +37,7 @@ export function SignUpPage() {
     setLoading(true)
     try {
       await signUpWithEmail(displayName, email, password)
-      navigate(`/verify-email${roleQuery}`)
+      navigate(redirectTo)
     } catch (err) {
       setError(friendlyAuthError(err))
     } finally {
@@ -52,7 +46,7 @@ export function SignUpPage() {
   }
 
   return (
-    <AuthLayout title="Create your account" subtitle="Listen, release music, or work as a DJ — you can add more later.">
+    <AuthLayout title="Create your account" subtitle="Search, save and play your personal music library.">
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <div>
           <Label htmlFor="name">Display name</Label>

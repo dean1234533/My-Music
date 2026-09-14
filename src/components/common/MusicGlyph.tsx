@@ -1,6 +1,6 @@
 import type { SVGProps } from 'react'
 
-/** BackTheVibes' own swept double-note mark. */
+/** My Music's own swept double-note mark. */
 export function MusicGlyph({ className, ...props }: SVGProps<SVGSVGElement>) {
   return (
     <svg

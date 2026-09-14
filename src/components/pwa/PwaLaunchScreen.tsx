@@ -22,7 +22,7 @@ export function PwaLaunchScreen() {
     <div
       className="fixed inset-0 z-[1000] grid min-h-[100svh] place-items-center overflow-hidden bg-[#050607] px-8 text-center"
       role="status"
-      aria-label="Opening BackTheVibes"
+      aria-label="Opening My Music"
     >
       <img
         src="/pwa-launch-bg.png"

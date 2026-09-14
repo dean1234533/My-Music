@@ -4,7 +4,6 @@ import {
   GoogleAuthProvider,
   reauthenticateWithCredential,
   reauthenticateWithPopup,
-  sendEmailVerification,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
@@ -21,7 +20,6 @@ export async function signUpWithEmail(
 ): Promise<void> {
   const credential = await createUserWithEmailAndPassword(auth, email, password)
   await updateProfile(credential.user, { displayName })
-  await sendEmailVerification(credential.user)
 }
 
 export async function signInWithEmail(email: string, password: string) {
@@ -31,11 +29,6 @@ export async function signInWithEmail(email: string, password: string) {
 export async function signInWithGoogle() {
   const provider = new GoogleAuthProvider()
   return signInWithPopup(auth, provider)
-}
-
-export async function resendVerificationEmail(): Promise<void> {
-  if (!auth.currentUser) throw new Error('No signed-in user')
-  await sendEmailVerification(auth.currentUser)
 }
 
 export async function requestPasswordReset(email: string): Promise<void> {

@@ -67,7 +67,7 @@ export function PlaylistPickerModal({ track, onClose }: { track: TrackDoc; onClo
       <div className="flex flex-col gap-5">
         <div className="flex items-center gap-3 rounded-xl border border-white/[0.08] bg-white/[0.025] p-3">
           <div className="h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-surface-3">
-            {track.artworkURL ? <img src={track.artworkURL} alt="" className="h-full w-full object-cover" /> : <ListMusic className="m-3 h-6 w-6 text-ink-3" />}
+            {track.thumbnail ? <img src={track.thumbnail} alt="" className="h-full w-full object-cover" /> : <ListMusic className="m-3 h-6 w-6 text-ink-3" />}
           </div>
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-ink-0">{track.title}</p>

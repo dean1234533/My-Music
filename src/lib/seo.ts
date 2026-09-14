@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 
-export const SITE_NAME = 'BackTheVibes'
+export const SITE_NAME = 'My Music'
 export const DEFAULT_OG_IMAGE = '/wavelength-hero.png'
 
 interface SeoOptions {

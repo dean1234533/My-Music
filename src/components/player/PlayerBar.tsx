@@ -1,34 +1,52 @@
-import { Link, useLocation } from 'react-router-dom'
-import { Pause, Play, SkipBack, SkipForward, Volume2, X } from 'lucide-react'
+import { useState } from 'react'
+import { Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Square, Volume2 } from 'lucide-react'
+import { clsx } from 'clsx'
 import { usePlayer } from '@/contexts/PlayerContext'
-import { useArtistSummary } from '@/hooks/useArtistSummary'
 import { useAuth } from '@/contexts/AuthContext'
 import { formatDuration } from '@/utils/format'
-import { FollowButton } from '@/components/music/FollowButton'
-import { SupportButton } from '@/components/music/SupportButton'
 import { TrackActions } from '@/components/music/TrackActions'
+import { FullScreenPlayer } from '@/components/player/FullScreenPlayer'
 
 export function PlayerBar() {
-  const { currentTrack, isPlaying, isLoading, progressSec, durationSec, volume, accessGranted, attachContainer, togglePlay, seek, next, previous, closePlayer, setVolume } =
-    usePlayer()
-  const artist = useArtistSummary(currentTrack?.artistId ?? null)
+  const {
+    currentTrack,
+    isPlaying,
+    isLoading,
+    progressSec,
+    durationSec,
+    volume,
+    shuffle,
+    repeat,
+    attachContainer,
+    togglePlay,
+    seek,
+    next,
+    previous,
+    stop,
+    setVolume,
+    toggleShuffle,
+    cycleRepeat,
+  } = usePlayer()
   const { firebaseUser } = useAuth()
-  const location = useLocation()
-
-  if (!currentTrack) return null
-
-  // Rendered globally now (not just inside AppShell), so it can't assume the dashboard's
-  // sidebar/MobileNav are on screen — only offset around them when they actually are.
-  const inDashboardShell = /^\/(app|dashboard|dj|admin)(\/|$)/.test(location.pathname)
+  const [expanded, setExpanded] = useState(false)
 
   return (
+    <>
+    {/* Always mounted (never conditionally removed) — the YouTube IFrame API needs this
+        node to exist in the DOM *before* the very first play attempt. Returning null here
+        until a track exists (as this used to) meant PlayerContext.loadAndPlay's very first
+        call always found attachContainer's ref still null and failed with "Player is not
+        ready yet.", since React hadn't yet rendered this component for the first time when
+        that synchronous check ran (user-reported: "when i search for a track i cant play
+        songs from there" — always failed on the first play of a session). Hiding via the
+        `hidden` utility (display:none) keeps the node mounted while invisible, which is all
+        that's needed — it becomes visible automatically once currentTrack is set. */}
     <div
       id="player-bar"
-      className={`fixed inset-x-0 z-50 border-t border-white/[0.08] bg-[#090b0d]/95 px-3 py-2 shadow-[0_-20px_50px_rgba(0,0,0,.2)] backdrop-blur-2xl md:z-40 md:px-6 md:py-3 ${
-        inDashboardShell
-          ? 'bottom-[calc(4rem+env(safe-area-inset-bottom))] md:bottom-0 md:left-[264px]'
-          : 'bottom-[env(safe-area-inset-bottom)]'
-      }`}
+      className={clsx(
+        'fixed inset-x-0 bottom-[env(safe-area-inset-bottom)] z-50 border-t border-white/[0.08] bg-[#090b0d]/95 px-3 py-2 shadow-[0_-20px_50px_rgba(0,0,0,.2)] backdrop-blur-2xl md:px-6 md:py-3',
+        !currentTrack && 'hidden',
+      )}
     >
       <div className="mb-1.5 flex items-center gap-2 md:hidden">
         <input
@@ -42,28 +60,33 @@ export function PlayerBar() {
       </div>
       <div className="flex items-center gap-3">
         <div className="flex min-w-0 flex-1 items-center gap-3">
-          {/* Official YouTube player mount — this is the actual playback surface, not decoration. Never hidden behind a custom UI. */}
+          {/* Official YouTube player mount — this is the actual playback surface, not decoration. Never hidden behind a custom UI, and never nested inside a <button> (would trap the iframe's own interaction). */}
           <div className="relative h-11 w-20 shrink-0 overflow-hidden rounded-[10px] bg-black ring-1 ring-white/10 sm:h-14 sm:w-24">
             <div ref={attachContainer} className="h-full w-full" />
           </div>
-          <div className="min-w-0">
-            <Link to={`/track/${currentTrack.trackId}`} className="block truncate text-sm font-medium text-ink-0 hover:underline">
-              {currentTrack.title}
-            </Link>
-            {artist ? (
-              <Link to={`/artist/${artist.slug}`} className="block truncate text-xs text-ink-2 hover:underline">
-                {artist.name}
-              </Link>
-            ) : null}
-          </div>
-          {artist ? (
-            <div className="hidden shrink-0 lg:block">
-              <FollowButton artistId={artist.artistId} size="sm" />
-            </div>
+          {currentTrack ? (
+            <button
+              type="button"
+              onClick={() => setExpanded(true)}
+              aria-label="Open full-screen player"
+              className="min-w-0 flex-1 text-left"
+            >
+              <p className="truncate text-sm font-medium text-ink-0">{currentTrack.title}</p>
+              <p className="truncate text-xs text-ink-2">{currentTrack.artist}</p>
+            </button>
           ) : null}
         </div>
 
         <div className="flex shrink-0 items-center gap-1 md:gap-2">
+          <button
+            onClick={toggleShuffle}
+            className={clsx('hidden rounded-full p-2 transition hover:bg-white/[0.06] sm:block', shuffle ? 'text-brand-400' : 'text-ink-2 hover:text-ink-0')}
+            aria-label="Shuffle"
+            aria-pressed={shuffle}
+            title="Shuffle"
+          >
+            <Shuffle className="h-4 w-4" />
+          </button>
           <button onClick={previous} className="rounded-full p-2 text-ink-2 transition hover:bg-white/[0.06] hover:text-ink-0" aria-label="Previous">
             <SkipBack className="h-4 w-4" />
           </button>
@@ -83,6 +106,14 @@ export function PlayerBar() {
           </button>
           <button onClick={next} className="rounded-full p-2 text-ink-2 transition hover:bg-white/[0.06] hover:text-ink-0" aria-label="Next">
             <SkipForward className="h-4 w-4" />
+          </button>
+          <button
+            onClick={cycleRepeat}
+            className={clsx('hidden rounded-full p-2 transition hover:bg-white/[0.06] sm:block', repeat !== 'off' ? 'text-brand-400' : 'text-ink-2 hover:text-ink-0')}
+            aria-label={`Repeat: ${repeat}`}
+            title={`Repeat: ${repeat === 'off' ? 'off' : repeat === 'queue' ? 'queue' : 'track'}`}
+          >
+            {repeat === 'track' ? <Repeat1 className="h-4 w-4" /> : <Repeat className="h-4 w-4" />}
           </button>
         </div>
 
@@ -116,36 +147,27 @@ export function PlayerBar() {
           />
         </div>
 
-        {firebaseUser ? (
+        {firebaseUser && currentTrack ? (
           <div className="hidden shrink-0 sm:block"><TrackActions track={currentTrack} /></div>
         ) : null}
 
         <button
           type="button"
-          onClick={closePlayer}
+          onClick={stop}
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-ink-2 transition hover:bg-white/[0.08] hover:text-ink-0"
-          aria-label="Close player"
-          title="Close player"
+          aria-label="Stop"
+          title="Stop"
         >
-          <X className="h-5 w-5" />
+          <Square className="h-4 w-4" fill="currentColor" />
         </button>
       </div>
-      {!isLoading && !accessGranted && artist && ['followers', 'supporters', 'early_access'].includes(currentTrack.visibility) ? (
-        <div className="mt-2 flex flex-col gap-2 rounded-xl border border-brand-400/20 bg-brand-500/[0.07] px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-xs leading-5 text-ink-1">
-            {currentTrack.visibility === 'followers'
-              ? `Follow ${artist.name} for free to unlock this track.`
-              : `Unlock this track by supporting ${artist.name}.`}
-          </p>
-          <div className="shrink-0">
-            {currentTrack.visibility === 'followers'
-              ? <FollowButton artistId={artist.artistId} size="sm" />
-              : <SupportButton artistId={artist.artistId} size="sm" />}
-          </div>
-        </div>
+      {currentTrack?.unavailable ? (
+        <p className="mt-2 text-center text-xs text-danger-500">This track is no longer available on YouTube.</p>
       ) : (
         <p className="mt-1 text-center text-[11px] text-ink-3">Played via YouTube</p>
       )}
     </div>
+    {expanded && currentTrack ? <FullScreenPlayer onClose={() => setExpanded(false)} /> : null}
+    </>
   )
 }

@@ -66,6 +66,15 @@ export async function removeTrackFromPlaylist(playlistId: string, trackId: strin
   await updateDoc(playlistRef(playlistId), { trackIds: arrayRemove(trackId), updatedAt: serverTimestamp() })
 }
 
+export async function renamePlaylist(playlistId: string, title: string): Promise<void> {
+  await updateDoc(playlistRef(playlistId), { title, updatedAt: serverTimestamp() })
+}
+
+/** Persists a manual drag-to-reorder — the full, already-reordered trackIds array replaces the old one. */
+export async function reorderPlaylistTracks(playlistId: string, trackIds: string[]): Promise<void> {
+  await updateDoc(playlistRef(playlistId), { trackIds, updatedAt: serverTimestamp() })
+}
+
 export async function deletePlaylist(playlistId: string): Promise<void> {
   await deleteDoc(playlistRef(playlistId))
 }

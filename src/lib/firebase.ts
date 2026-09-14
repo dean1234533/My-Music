@@ -5,25 +5,36 @@ import type { Functions } from 'firebase/functions'
 import type { FirebaseStorage } from 'firebase/storage'
 import type { Messaging } from 'firebase/messaging'
 
-// Falls back to the real project config rather than failing outright when
-// VITE_* env vars don't reach the build (seen in practice with Cloudflare's
-// Workers-Builds CI, where the dashboard's "Variables and Secrets" section
-// is a runtime Worker binding, not a build-time shell env var — env.local
-// or a real CI build-vars section should still be preferred when available).
-// These are all public client identifiers, safe to hardcode — see README.
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyAma8nf3wFJcq6I3kJ_qO4YNu900F7-uCg',
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'music-platform-app-c45ac.firebaseapp.com',
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'music-platform-app-c45ac',
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'music-platform-app-c45ac.firebasestorage.app',
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '118149049811',
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:118149049811:web:7a0499f0831ba6cf609326',
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || 'G-VPE6S8RZF0',
+// My Music is a separate, personal fork of another app — it must never fall
+// back to any hardcoded project config (a previous version of this file fell
+// back to that other app's own production Firebase project, which would have
+// meant this app silently read/wrote real production data whenever env vars
+// were missing). There is no fallback: every value must come from your own
+// Firebase project's env vars (see .env.example), or the app fails loudly
+// at startup instead of connecting to the wrong project.
+const requiredEnv = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
 }
 
-export const FIREBASE_VAPID_KEY =
-  import.meta.env.VITE_FIREBASE_VAPID_KEY ||
-  'BN9dq93h_z4WIC4Iiw4RS5jVDg-M7zYm1D72P-nsvTn5q7Lmf8zQbIhJdtTBlfEOpUtlaQteCFw1MZy-PEfl2q8'
+for (const [key, value] of Object.entries(requiredEnv)) {
+  if (!value) {
+    throw new Error(
+      `Missing ${key} — set VITE_FIREBASE_* env vars for your own Firebase project in .env (see .env.example). This app never falls back to a default project.`,
+    )
+  }
+}
+
+const firebaseConfig = {
+  ...requiredEnv,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || undefined,
+}
+
+export const FIREBASE_VAPID_KEY = import.meta.env.VITE_FIREBASE_VAPID_KEY || undefined
 
 export const firebaseApp = getApps().length ? getApps()[0]! : initializeApp(firebaseConfig)
 

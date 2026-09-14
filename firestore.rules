@@ -1,5 +1,11 @@
 rules_version = '2';
 
+// My Music — a personal, YouTube-powered music library and player.
+// The data model is intentionally tiny: everything except the shared
+// `tracks` metadata cache is private to the signed-in user who owns it.
+// No marketplace, no admin roles, no payments — just a library, playlists,
+// favorites, play history, and per-user settings.
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -11,640 +17,118 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == uid;
     }
 
-    function existingUserRoles() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roles;
-    }
-
-    function hasRole(role) {
-      return isSignedIn() &&
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        role in existingUserRoles();
-    }
-
-    function isAdmin() {
-      return hasRole('admin');
-    }
-
-    // A track's own sibling doc, re-checked directly rather than trusting
-    // whatever the caller claims — used to let a genuinely public track's
-    // trackMedia doc (the YouTube video ID) be read anonymously, since
-    // "public" already means "anyone, signed in or not, can play this" —
-    // the same thing getTrackYoutubeInfo already grants everyone for a
-    // public track. This does not loosen anything for followers/supporters/
-    // dj_only/private tracks, which still go exclusively through
-    // getTrackYoutubeInfo's own entitlement check.
-    function isPublicPlayableTrack(trackId) {
-      let track = get(/databases/$(database)/documents/tracks/$(trackId)).data;
-      return track.visibility == 'public'
-        && track.get('status', 'published') == 'published'
-        && track.get('artistRoleActive', true) == true
-        && track.get('takenDown', false) != true
-        && !track.get('restrictedCapabilities', []).hasAny(['streaming']);
-    }
-
-    // "Supporter" means: has ever made a one-off Stripe Connect support
-    // payment to this artist — a supportRelationships doc only ever exists
-    // because of a real, server-recorded payment (see
-    // functions/src/stripe/webhook.ts's handleSupportCheckoutCompleted).
-    // There is no more recurring fan subscription to additionally check.
-    function hasActiveSupportFor(artistId) {
-      return isSignedIn()
-        && exists(/databases/$(database)/documents/supportRelationships/$(request.auth.uid + '_' + artistId));
-    }
-
-    // Fans never hold a paid subscription any more — fan_free is the one
-    // plan every fan is always on, so this reads its features directly
-    // rather than a per-user subscriptions/{uid}_fan doc that no longer
-    // gets created (see functions/src/admin/seedPlans.ts).
-    function hasFanFeature(feature) {
-      return isSignedIn()
-        && get(/databases/$(database)/documents/subscriptionPlans/fan_free).data.features.get(feature, false) == true;
+    function isOwner(field) {
+      return isSignedIn() && request.auth.uid == field;
     }
 
     // ---------------------------------------------------------------------
-    // users/{userId} — private account document. Owner can read/update it,
-    // but can never touch roles beyond fan/artist/dj, never grant themselves
-    // admin, and never write subscriptionStatus, stripeCustomerId, or
-    // suspended (all Cloud-Function/Admin-SDK only). Admins can read any
-    // user for the admin dashboard, but writes to other accounts still only
-    // happen through callables (adminSetUserSuspension etc.), never a raw
-    // client write, so every admin action produces an audit log entry.
+    // users/{uid} — private account document, doc ID == uid. Normally
+    // created server-side by the auth-trigger Cloud Function
+    // (functions/src/users.ts), but ensureUserDocument() in
+    // src/services/userService.ts can also create it client-side as a
+    // fallback if the trigger hasn't run yet, so client create is allowed
+    // too as long as the doc ID matches the caller's own uid.
     // ---------------------------------------------------------------------
-    match /users/{userId} {
-      allow read: if isSelf(userId) || isAdmin();
-
-      allow create: if isSelf(userId)
-        && request.resource.data.uid == userId
-        && request.resource.data.roles.size() == 0
-        && request.resource.data.onboardingComplete == false
-        && request.resource.data.subscriptionStatus == 'none';
-
-      allow update: if isSelf(userId)
-        && request.resource.data.uid == resource.data.uid
-        && request.resource.data.subscriptionStatus == resource.data.subscriptionStatus
-        && request.resource.data.get('stripeCustomerId', null) == resource.data.get('stripeCustomerId', null)
-        && request.resource.data.get('suspended', false) == resource.data.get('suspended', false)
-        && (
-          // Normal account, first-ever role write (initial onboarding —
-          // the doc was created with roles == [] and this is the one write
-          // that sets it): sets exactly one of fan/artist/dj, once. A
-          // regular account keeps exactly this one role for life — never
-          // more than one at a time, enforced here at size 1 rather than
-          // just "a subset of", so a crafted write can't pick two roles at
-          // once (e.g. ['fan', 'artist']) in this single unguarded write.
-          (resource.data.roles.size() == 0 && request.resource.data.roles.size() == 1 && request.resource.data.roles.hasOnly(['fan', 'artist', 'dj']))
-          // Normal account, already onboarded: roles are completely frozen
-          // on this client path from here on — no self-service add OR
-          // remove, ever again. Adding a later role (e.g. a fan becoming an
-          // artist) or stepping back from one is admin-only.
-          || (resource.data.roles.hasOnly(['fan', 'artist', 'dj']) && request.resource.data.roles == resource.data.roles)
-          // Admin account: free to add or remove its own fan/artist/dj
-          // roles — including stepping back from all of them to operate
-          // invisibly — but 'admin' itself can never be touched through
-          // this client path; granting or revoking admin is backend-only.
-          || (resource.data.roles.hasAny(['admin'])
-              && request.resource.data.roles.hasAny(['admin'])
-              && request.resource.data.roles.removeAll(['admin']).hasOnly(['fan', 'artist', 'dj']))
-        );
-
+    match /users/{uid} {
+      allow read, update: if isSelf(uid);
+      allow create: if isSelf(uid) && request.resource.data.uid == uid;
       allow delete: if false;
     }
 
     // ---------------------------------------------------------------------
-    // artistProfiles/{artistId} — public read. Only the owning artist can
-    // write, and only to their own document (artistId == uid). verified/
-    // followerCount/supporterCount are frozen — Cloud Functions only.
-    // ---------------------------------------------------------------------
-    match /artistProfiles/{artistId} {
-      // Public only while the account still actually holds the artist role
-      // — stepping back from it (removeRole) hides this from everyone but
-      // the owner and admins, without deleting anything.
-      //
-      // A denormalized field, not a live roleActiveFor(artistId, 'artist')
-      // cross-document check: Firestore rejects an ENTIRE list-style query
-      // outright (permission-denied for every candidate, not just an
-      // inactive one) when its security rule needs a get()/exists() call
-      // and the query has no equality filter narrow enough to bound the
-      // candidate set — confirmed live, this broke listRisingArtists,
-      // listMostSupportedArtists, listNewReleaseTracks, and DJ discovery
-      // for every caller, signed in or not (user-reported: "a fan can not
-      // see artist profile cards"). roleActive defaults to true when absent
-      // so every pre-existing document needs no backfill; it's kept in sync
-      // going forward by onUserRolesChange, which is the only thing that
-      // may ever set it (frozen from every other client write below).
-      allow read: if resource.data.get('roleActive', true) == true || isSelf(artistId) || isAdmin();
-      // Creation is Cloud-Function-only (createArtistProfile) — it also
-      // grants the artist role in the same server-side transaction, which
-      // a direct client create here never could (users/{userId}'s own
-      // rules freeze a regular account's roles after signup). Admin SDK
-      // writes bypass these rules entirely, so this doesn't block that path.
-      allow create: if false;
-      // trackCount is server-maintained. Perks are artist-writable.
-      allow update: if isSelf(artistId)
-        && request.resource.data.artistId == resource.data.artistId
-        && request.resource.data.slug == resource.data.slug
-        && request.resource.data.followerCount == resource.data.followerCount
-        && request.resource.data.supporterCount == resource.data.supporterCount
-        && request.resource.data.verified == resource.data.verified
-        && request.resource.data.get('trackCount', 0) == resource.data.get('trackCount', 0)
-        && request.resource.data.get('profileViews', 0) == resource.data.get('profileViews', 0)
-        && request.resource.data.get('referralViews', {}) == resource.data.get('referralViews', {})
-        && request.resource.data.get('followConversions', 0) == resource.data.get('followConversions', 0)
-        && request.resource.data.get('supportConversions', 0) == resource.data.get('supportConversions', 0)
-        && request.resource.data.get('roleActive', true) == resource.data.get('roleActive', true);
-      allow delete: if false;
-    }
-
-    // artistSlugs/{slug} — reservation records; immutable once created.
-    match /artistSlugs/{slug} {
-      allow read: if true;
-      // Reservation happens inside createArtistProfile's transaction (Admin
-      // SDK, bypasses this rule) or adminChangeArtistSlug — never a direct
-      // client write, so two artists can never race for the same slug
-      // outside a server-controlled transaction.
-      allow create: if false;
-      allow update, delete: if false;
-    }
-
-    match /djProfiles/{djId} {
-      // Same denormalized-field gate as artistProfiles above, for the same reason.
-      allow read: if resource.data.get('roleActive', true) == true || isSelf(djId) || isAdmin();
-      // Creation is Cloud-Function-only (createDJProfile) — same reasoning as artistProfiles above.
-      allow create: if false;
-      // Verification is server-maintained. bulkOutreachOptIn is DJ-writable.
-      allow update: if isSelf(djId)
-        && request.resource.data.djId == resource.data.djId
-        && request.resource.data.verificationStatus == resource.data.verificationStatus
-        && request.resource.data.get('roleActive', true) == resource.data.get('roleActive', true);
-      allow delete: if false;
-    }
-
-    // ---------------------------------------------------------------------
-    // tracks/{trackId} — visibility-gated read, owner-only write. There is
-    // no hosted audio: playback is always the official YouTube embed, keyed
-    // by the validated youtubeVideoId. playCount and takenDown are frozen
-    // from client writes.
+    // tracks/{youtubeVideoId} — shared cache of YouTube metadata, keyed by
+    // its own video ID so the same video is never duplicated across two
+    // docs. This is just cached public YouTube metadata, not personal data,
+    // so any signed-in user may create or read a track doc — but the doc ID
+    // must equal the track's own youtubeVideoId, and that ID must look like
+    // a real YouTube video ID. Once created, the identity fields
+    // (youtubeVideoId/source/createdAt) can never change. `unavailable` may
+    // only be flipped false -> true (the player marking a video as gone),
+    // never reset back to false from a client. No client delete.
     // ---------------------------------------------------------------------
     match /tracks/{trackId} {
-      // Metadata (title/artwork/youtubeVideoId/etc) is readable for any
-      // non-private, non-dj_only-to-non-DJs track, even by a signed-out
-      // visitor — the public profile shows a locked followers/supporters
-      // track with a Follow/Support CTA rather than hiding it outright.
-      // getTrackYoutubeInfo re-checks this same ladder server-side before
-      // ever handing back a video ID, so a future visibility tightening is
-      // enforced even if a client held a stale copy of this doc.
-      // The artist-still-holds-the-role gate also applies here — the same
-      // stepping-back that hides artistProfiles hides their tracks too, not
-      // just the profile page, so a bookmarked/shared track link goes dark
-      // along with everything else. Denormalized (artistRoleActive), not a
-      // live roleActiveFor() cross-document check, for the same list-query
-      // reason documented on artistProfiles above — this exact check broke
-      // every broad tracks query (new releases, DJ discovery, genre search)
-      // for every caller before switching to a plain per-document field.
-      allow read: if ((resource.data.get('status', 'published') == 'published')
-        && resource.data.get('artistRoleActive', true) == true
-        && (
-           resource.data.visibility == 'public'
-        || resource.data.visibility == 'followers'
-        || resource.data.visibility == 'supporters'
-        || resource.data.visibility == 'early_access'
-        || (resource.data.visibility == 'dj_only' && hasRole('dj'))))
-        || (isSignedIn() && resource.data.artistId == request.auth.uid)
-        || isAdmin();
+      allow read: if true;
 
-      // The YouTube video ID is never stored on this doc — see trackMedia
-      // below. This doc's read rule intentionally exposes locked-tier
-      // metadata (title/artwork/genre) to any visitor so a public profile
-      // can show a Follow/Support CTA on a locked track; the one thing that
-      // could actually let someone bypass a lock is the video ID, which is
-      // why it lives in a genuinely admin/Function-only document instead.
-      // createTrack (Cloud Function) is the only way to create a track, so
-      // it can atomically write both this doc and trackMedia together.
-      allow create: if false;
+      allow create: if isSignedIn()
+        && trackId == request.resource.data.youtubeVideoId
+        && trackId.matches('^[A-Za-z0-9_-]{11}$')
+        && request.resource.data.source == 'youtube';
 
       allow update: if isSignedIn()
-        && resource.data.artistId == request.auth.uid
-        && request.resource.data.artistId == resource.data.artistId
-        && request.resource.data.playCount == resource.data.playCount
-        && request.resource.data.get('status', 'published') == resource.data.get('status', 'published')
-        && request.resource.data.get('takenDown', false) == resource.data.get('takenDown', false)
-        && request.resource.data.get('restrictedCapabilities', []) == resource.data.get('restrictedCapabilities', [])
-        && request.resource.data.get('legalHold', false) == resource.data.get('legalHold', false)
-        && request.resource.data.get('trackSlug', null) == resource.data.get('trackSlug', null)
-        && request.resource.data.get('viewCount', 0) == resource.data.get('viewCount', 0)
-        && request.resource.data.get('artistRoleActive', true) == resource.data.get('artistRoleActive', true);
+        && request.resource.data.youtubeVideoId == resource.data.youtubeVideoId
+        && request.resource.data.source == resource.data.source
+        && request.resource.data.createdAt == resource.data.createdAt
+        && resource.data.get('unavailable', false) != true
+        // Every other field may change freely (refreshed title/thumbnail/
+        // duration/etc); only `unavailable` may ever flip, and only false -> true.
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['unavailable', 'updatedAt'])
+        && request.resource.data.unavailable == true;
 
-      // Server callable performs licence/legal-hold checks and media cleanup.
       allow delete: if false;
     }
 
-    // trackMedia/{trackId} — the actual YouTube video ID/URL. Not client-
-    // writable at all, and not client-readable either, EXCEPT for a track
-    // that's already fully public — getTrackYoutubeInfo (Admin SDK) already
-    // discloses a public track's video ID to literally anyone, so allowing
-    // that one already-open case through rules too (instead of exclusively
-    // through the callable) is what lets the Cloudflare Worker's public,
-    // unauthenticated artist API — which the WordPress plugin depends on —
-    // actually return a track's playable link (user-reported, WordPress
-    // plugin testing: a Public-visibility track's own public API response
-    // still had no youtubeUrl at all, since this rule blocked it outright
-    // even for a track anyone can already play on the main site).
-    // followers/supporters/dj_only/private stay exclusively gated by
-    // getTrackYoutubeInfo's own re-checked entitlement ladder.
-    match /trackMedia/{trackId} {
-      allow read: if isPublicPlayableTrack(trackId);
-      allow write: if false;
-    }
-
-    match /trackSlugs/{registryId} {
-      allow read: if true;
-      allow create: if isSignedIn() && request.resource.data.artistId == request.auth.uid;
-      allow update, delete: if false;
-    }
-
-    match /albums/{albumId} {
-      allow read: if true;
-      allow create, update: if isSignedIn() && request.resource.data.artistId == request.auth.uid;
-      allow delete: if isSignedIn() && resource.data.artistId == request.auth.uid;
-    }
-
-    // follows/{fanId_artistId} — only the fan can read/write their own follow.
-    // followerCount on artistProfiles is updated server-side by a trigger.
-    match /follows/{followId} {
-      // resource == null short-circuits for the common "not following" case
-      // — subscribeIsFollowing reads a doc that usually doesn't exist.
-      allow read: if isSignedIn() && (resource == null || resource.data.fanId == request.auth.uid);
-      allow create: if isSignedIn()
-        && request.resource.data.fanId == request.auth.uid
-        && followId == request.resource.data.fanId + '_' + request.resource.data.artistId;
-      allow delete: if isSignedIn() && resource.data.fanId == request.auth.uid;
-      allow update: if false;
-    }
-
-    // blockedUsers/{blockerId_blockedId} — who I've blocked. Read is
-    // blocker-only (the blocked party never gets to see they're blocked
-    // through this doc); enforcement (e.g. sendMessage refusing to deliver
-    // between two users where either has blocked the other) happens
-    // server-side via the Admin SDK, which isn't limited by this read rule.
-    match /blockedUsers/{blockId} {
-      allow read: if isSignedIn() && (resource == null || resource.data.blockerId == request.auth.uid);
-      allow create: if isSignedIn()
-        && request.resource.data.blockerId == request.auth.uid
-        && request.resource.data.blockedId != request.auth.uid
-        && blockId == request.resource.data.blockerId + '_' + request.resource.data.blockedId;
-      allow delete: if isSignedIn() && resource.data.blockerId == request.auth.uid;
-      allow update: if false;
-    }
-
-    match /trackLikes/{likeId} {
-      // resource == null short-circuits for the common "not liked" case —
-      // subscribeIsLiked reads a doc that usually doesn't exist.
-      // create requires hasRole('fan') — this is fan library/discovery
-      // functionality, the same reasoning crates below requires hasRole('dj')
-      // for its own equivalent feature (user-reported: an artist account
-      // could like tracks and build playlists, which shouldn't be possible
-      // now that artist/dj/fan are strictly single, mutually exclusive roles).
-      allow read: if isSignedIn() && (resource == null || resource.data.fanId == request.auth.uid);
-      allow create: if isSignedIn()
-        && request.resource.data.fanId == request.auth.uid
-        && likeId == request.resource.data.fanId + '_' + request.resource.data.trackId
-        && hasRole('fan');
-      allow delete: if isSignedIn() && resource.data.fanId == request.auth.uid;
-      allow update: if false;
-    }
-
+    // ---------------------------------------------------------------------
+    // playlists/{playlistId} — owner-only. Auto-generated doc ID; ownership
+    // is a field check (ownerId), matching src/services/playlistService.ts.
+    // ---------------------------------------------------------------------
     match /playlists/{playlistId} {
-      allow read: if isSignedIn() && (resource == null || resource.data.ownerId == request.auth.uid);
-      allow create: if isSignedIn() && request.resource.data.ownerId == request.auth.uid && hasRole('fan');
-      allow update, delete: if isSignedIn() && resource.data.ownerId == request.auth.uid;
-    }
-
-    // crates/{crateId} — DJ-only equivalent of playlists (saved/organized
-    // track lists for a set). Kept as a separate collection so fan playlist
-    // queries and DJ crate queries never conflate.
-    match /crates/{crateId} {
-      allow read: if isSignedIn() && (resource == null || resource.data.ownerId == request.auth.uid);
-      allow create: if isSignedIn() && request.resource.data.ownerId == request.auth.uid && hasRole('dj');
-      allow update, delete: if isSignedIn() && resource.data.ownerId == request.auth.uid;
-    }
-
-    match /artistPosts/{postId} {
-      allow read: if resource.data.visibility == 'everyone'
-        || (isSignedIn() && resource.data.artistId == request.auth.uid)
-        || (resource.data.visibility == 'followers' && isSignedIn() && (
-            exists(/databases/$(database)/documents/follows/$(request.auth.uid + '_' + resource.data.artistId))
-            || hasActiveSupportFor(resource.data.artistId)))
-        || (resource.data.visibility == 'supporters' && hasActiveSupportFor(resource.data.artistId));
-      allow create: if isSignedIn() && request.resource.data.artistId == request.auth.uid;
-      allow update, delete: if isSignedIn() && resource.data.artistId == request.auth.uid;
-    }
-
-    // Artist-created benefits for listeners. Audience access mirrors posts;
-    // redemption details are part of the offer and therefore protected by
-    // the same visibility check.
-    match /fanOffers/{offerId} {
-      allow read: if resource.data.audience == 'everyone'
-        || (isSignedIn() && resource.data.artistId == request.auth.uid)
-        || (resource.data.audience == 'followers' && isSignedIn() &&
-            exists(/databases/$(database)/documents/follows/$(request.auth.uid + '_' + resource.data.artistId)))
-        || (resource.data.audience == 'supporters' && hasActiveSupportFor(resource.data.artistId));
-      allow create: if isSignedIn()
-        && hasRole('artist')
-        && request.resource.data.artistId == request.auth.uid
-        && request.resource.data.offerId == offerId;
-      allow update: if false;
-      allow delete: if isSignedIn() && resource.data.artistId == request.auth.uid;
-    }
-
-    match /fanOfferClaims/{claimId} {
-      allow read: if isSignedIn()
-        && (resource == null || resource.data.fanId == request.auth.uid || resource.data.artistId == request.auth.uid);
-      allow create: if isSignedIn()
-        && request.resource.data.fanId == request.auth.uid
-        && request.resource.data.claimId == claimId
-        && claimId == request.auth.uid + '_' + request.resource.data.offerId
-        && exists(/databases/$(database)/documents/fanOffers/$(request.resource.data.offerId))
-        && request.resource.data.artistId == get(/databases/$(database)/documents/fanOffers/$(request.resource.data.offerId)).data.artistId
-        && (
-          get(/databases/$(database)/documents/fanOffers/$(request.resource.data.offerId)).data.audience == 'everyone'
-          || (get(/databases/$(database)/documents/fanOffers/$(request.resource.data.offerId)).data.audience == 'followers'
-              && exists(/databases/$(database)/documents/follows/$(request.auth.uid + '_' + request.resource.data.artistId)))
-          || (get(/databases/$(database)/documents/fanOffers/$(request.resource.data.offerId)).data.audience == 'supporters'
-              && hasActiveSupportFor(request.resource.data.artistId))
-        )
-        // Artist-defined perks are a paid Fan plan feature (see seedPlans.ts: the free
-        // fan_free plan's features map is {}) — per-artist audience above governs WHICH
-        // artist's offers a fan can see; this governs whether their own plan unlocks
-        // claiming ANY of them at all.
-        && hasFanFeature('artistDefinedPerks');
-      allow update: if false;
-      allow delete: if isSignedIn() && resource.data.fanId == request.auth.uid;
+      allow read, update, delete: if isOwner(resource.data.ownerId);
+      allow create: if isOwner(request.resource.data.ownerId);
     }
 
     // ---------------------------------------------------------------------
-    // stories/{storyId} — ephemeral artist updates, tiered visibility same
-    // shape as artistPosts plus a 4th 'dj' tier gated by the artist's own
-    // storiesDjEnabled opt-in (independent of djAllowRequests). Written only
-    // via createStory/toggleStoryHighlight/adminDeleteStory (Admin SDK) so
-    // CTA targets can be server-validated against real tracks — the one
-    // client-writable exception is ctaClickCount, a low-stakes counter.
+    // favorites/{uid}_{trackId} — owner-only, doc ID encodes ownership so a
+    // track can only ever be favorited once per user.
     // ---------------------------------------------------------------------
-    match /stories/{storyId} {
-      allow read: if resource.data.visibility == 'public'
-        || (isSignedIn() && resource.data.artistId == request.auth.uid)
-        || (resource.data.visibility == 'followers' && isSignedIn() && (
-            exists(/databases/$(database)/documents/follows/$(request.auth.uid + '_' + resource.data.artistId))
-            || hasActiveSupportFor(resource.data.artistId)))
-        || (resource.data.visibility == 'supporters' && hasActiveSupportFor(resource.data.artistId))
-        || (resource.data.visibility == 'dj' && hasRole('dj') &&
-            get(/databases/$(database)/documents/artistProfiles/$(resource.data.artistId)).data.get('storiesDjEnabled', false) == true)
-        || isAdmin();
-      allow create: if false;
-      allow delete: if isSignedIn() && resource.data.artistId == request.auth.uid;
-      allow update: if isSignedIn()
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ctaClickCount'])
-        && request.resource.data.ctaClickCount == resource.data.ctaClickCount + 1;
-    }
-
-    // storyViews/{storyId_userId} — dedup doc per viewer; direct client write
-    // + Firestore trigger aggregates uniqueViewerCount onto the story, same
-    // pattern as follows/followerCount. Never deletable (a "seen" state
-    // sticks) or updatable.
-    match /storyViews/{viewId} {
-      allow read: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid);
-      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid
-        && viewId == request.resource.data.storyId + '_' + request.auth.uid;
-      allow update, delete: if false;
-    }
-
-    // storyReactions/{storyId_userId} — one reaction per viewer, deletable
-    // (un-react), aggregated onto reactionCount by trigger.
-    match /storyReactions/{reactionId} {
-      allow read: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid);
-      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid
-        && reactionId == request.resource.data.storyId + '_' + request.auth.uid;
-      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    match /favorites/{favoriteId} {
+      allow read, delete: if isOwner(resource.data.uid);
+      allow create: if isOwner(request.resource.data.uid)
+        && favoriteId == request.resource.data.uid + '_' + request.resource.data.trackId;
       allow update: if false;
     }
 
-    // storyPollVotes/{storyId_userId} — one vote per viewer, permanent,
-    // aggregated onto pollVoteCounts by trigger.
-    match /storyPollVotes/{voteId} {
-      allow read: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid);
-      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid
-        && voteId == request.resource.data.storyId + '_' + request.auth.uid;
-      allow update, delete: if false;
+    // ---------------------------------------------------------------------
+    // savedTracks/{uid}_{trackId} — a user's independent library, separate
+    // from favorites/playlists (a track can be saved without being liked or
+    // in any playlist). Same owner-encoded-doc-ID pattern as favorites, so
+    // saving the same track twice is a no-op overwrite, never a duplicate.
+    // ---------------------------------------------------------------------
+    match /savedTracks/{savedId} {
+      allow read, delete: if isOwner(resource.data.uid);
+      allow create: if isOwner(request.resource.data.uid)
+        && savedId == request.resource.data.uid + '_' + request.resource.data.trackId;
+      allow update: if false;
     }
 
-    // djDeals/{dealId} — artist-created reusable licence deal templates.
-    // Public read (DJs need to see terms on the track page), owner write.
-    // Not security-sensitive like licenceAgreements (no money/signature
-    // attached until a request references one), so direct client writes are
-    // fine here — mirrors artistProfiles/artistPosts rather than the fully
-    // callable-only agreement pipeline.
-    match /djDeals/{dealId} {
-      allow read: if true;
-      allow create: if isSignedIn() && request.resource.data.artistId == request.auth.uid
-        && request.resource.data.dealId == dealId;
-      allow update: if isSignedIn() && resource.data.artistId == request.auth.uid
-        && request.resource.data.artistId == resource.data.artistId
-        && request.resource.data.dealId == resource.data.dealId;
-      allow delete: if isSignedIn() && resource.data.artistId == request.auth.uid;
+    // ---------------------------------------------------------------------
+    // playHistory/{historyId} — owner-only, auto-generated doc ID. Entries
+    // are immutable once written: create or delete only, never update.
+    // ---------------------------------------------------------------------
+    match /playHistory/{historyId} {
+      allow read, delete: if isOwner(resource.data.uid);
+      allow create: if isOwner(request.resource.data.uid);
+      allow update: if false;
     }
 
-    // subscriptionPlans/{planId} — admin-configured pricing, public read only.
-    match /subscriptionPlans/{planId} {
-      allow read: if true;
-      allow write: if false; // written only via adminUpsertSubscriptionPlan
+    // ---------------------------------------------------------------------
+    // settings/{uid} — owner-only, doc ID == uid.
+    // ---------------------------------------------------------------------
+    match /settings/{uid} {
+      allow read, write: if isSelf(uid);
     }
 
-    // platformSettings/default (fees) and platformSettings/dataRetention
-    // (retention periods) share this rule — both are public-read config,
-    // written only via adminUpdatePlatformSettings / adminUpdateDataRetentionSettings.
-    match /platformSettings/{settingId} {
-      allow read: if true;
-      allow write: if false;
-    }
-
-    // accountDeletions/{uid} — deletion-status tracking written only by the
-    // deleteAccount callable. The owner can poll their own deletion's
-    // progress; nobody can forge or alter a status client-side.
-    match /accountDeletions/{uid} {
-      allow read: if isSelf(uid) || isAdmin();
-      allow write: if false;
-    }
-
-    // rateLimits/{key} — Cloud-Function-only abuse-throttle counters
-    // (enforceRateLimit in functions/src/rateLimit.ts). Never client-readable
-    // or writable; the count itself isn't meaningful to expose.
+    // ---------------------------------------------------------------------
+    // rateLimits/{key} — Cloud-Function-only abuse-throttle counters (see
+    // functions/src/rateLimit.ts, used by the YouTube search rate limit).
+    // Never client-readable or writable.
+    // ---------------------------------------------------------------------
     match /rateLimits/{key} {
       allow read, write: if false;
     }
 
-    // previewSessions/{fanId_artistId} — Cloud-Function-only "did this fan
-    // recently preview this artist" signal, read by onFollowCreate/
-    // onSupportRelationshipCreate to count real (not assumed) conversions.
-    match /previewSessions/{sessionId} {
+    // Everything else no longer exists in this app — deny by default.
+    match /{document=**} {
       allow read, write: if false;
-    }
-
-    // ---------------------------------------------------------------------
-    // Phase 2 — subscriptions, support allocation, revenue records.
-    // ---------------------------------------------------------------------
-    // Doc ID is `${userId}_${role}` — a user can hold up to 3 concurrent
-    // subscriptions, one per role, so ownership is a field check, not an ID check.
-    match /subscriptions/{subId} {
-      // No doc exists for a user on a role's free/default tier (the common
-      // case) — resource == null must short-circuit before dereferencing
-      // resource.data, or reading your own absent subscription throws
-      // "missing or insufficient permissions" instead of just returning
-      // not-found.
-      allow read: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
-      allow write: if false; // Stripe webhook only
-    }
-
-    match /supportRelationships/{relationshipId} {
-      // resource == null short-circuits for the common "not supporting" case
-      // — subscribeIsSupporting reads a doc that usually doesn't exist. Only
-      // ever created by the Stripe webhook after a real payment — see
-      // functions/src/stripe/webhook.ts's handleSupportCheckoutCompleted.
-      allow read: if isSignedIn() &&
-        (resource == null || resource.data.fanId == request.auth.uid || resource.data.artistId == request.auth.uid);
-      allow write: if false; // Stripe webhook only
-    }
-
-    match /artistPayoutAccounts/{artistId} {
-      allow read: if isSelf(artistId) || isAdmin();
-      allow write: if false; // Stripe Connect callables/webhook only
-    }
-
-    // notifications/{notificationId} — owner-only, created server-side only.
-    match /notifications/{notificationId} {
-      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow update: if isSignedIn()
-        && resource.data.userId == request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
-      // A user's own notification carries no other party's data or downstream
-      // effect (unlike e.g. licenceRequests) — safe as a direct client delete,
-      // scoped to the owner, matching the existing update rule's shape.
-      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow create: if false;
-    }
-
-    // ---------------------------------------------------------------------
-    // Phase 3-4 — DJ requests, messaging, agreements. All writes go through
-    // callables so status transitions, signatures, and payment gating can't
-    // be forged client-side.
-    // ---------------------------------------------------------------------
-    match /licenceRequests/{docId} {
-      allow read: if isSignedIn() && (resource.data.djId == request.auth.uid || resource.data.artistId == request.auth.uid || isAdmin());
-      allow write: if false;
-
-      match /events/{eventId} {
-        allow read: if isSignedIn() && (
-          get(/databases/$(database)/documents/licenceRequests/$(docId)).data.djId == request.auth.uid ||
-          get(/databases/$(database)/documents/licenceRequests/$(docId)).data.artistId == request.auth.uid ||
-          isAdmin()
-        );
-        allow write: if false;
-      }
-    }
-    match /licenceAgreements/{docId} {
-      allow read: if isSignedIn() && (resource.data.djId == request.auth.uid || resource.data.artistId == request.auth.uid || isAdmin());
-      allow write: if false;
-    }
-    // licenceOffers/{offerId} — versioned offer/counter-offer history.
-    // Never overwritten by clients — every new offer or counter is a new
-    // doc written by sendOffer/counterOffer/acceptOffer/withdrawOffer.
-    match /licenceOffers/{docId} {
-      allow read: if isSignedIn() && (resource.data.djId == request.auth.uid || resource.data.artistId == request.auth.uid || isAdmin());
-      allow write: if false;
-    }
-    match /licenceAgreementAcceptances/{docId} {
-      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow write: if false;
-    }
-    // Legacy — the DJ<->artist flow no longer creates these (it's a
-    // structured, no-chat negotiation now: licenceRequests/{id}/events).
-    // Left read-only in case any pre-existing conversation still needs to
-    // be inspected; nothing server-side writes to this collection anymore.
-    match /conversations/{conversationId} {
-      allow read: if isSignedIn() && request.auth.uid in resource.data.participantIds;
-      allow write: if false;
-
-      match /messages/{messageId} {
-        allow read: if isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds;
-        allow write: if false;
-      }
-    }
-    match /downloadLogs/{docId} {
-      allow read: if isSignedIn() && (resource.data.djId == request.auth.uid || resource.data.artistId == request.auth.uid || isAdmin());
-      allow write: if false;
-    }
-
-    // ---------------------------------------------------------------------
-    // Phase 5 — Stripe Connect, verification, moderation, admin.
-    // Every payment (fan support, DJ licence) is a Stripe Connect
-    // destination charge paid directly to the artist — there is no
-    // artistBalances/payouts ledger; transactions is bookkeeping only.
-    // ---------------------------------------------------------------------
-    match /transactions/{docId} {
-      allow read: if isSignedIn() && (resource.data.artistId == request.auth.uid || resource.data.fanId == request.auth.uid || isAdmin());
-      allow write: if false;
-    }
-    match /verificationRequests/{docId} {
-      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow write: if false;
-    }
-    match /reports/{docId} {
-      // Written only via the submitReport/adminResolveReport callables
-      // (Admin SDK, bypasses these rules) — client writes are never valid.
-      allow read: if isAdmin();
-      allow write: if false;
-    }
-    match /copyrightClaims/{docId} {
-      // Written only via submitCopyrightClaim/reviewCopyrightClaim/
-      // submitArtistResponse/submitCounterNotice (Admin SDK). A client
-      // `create` here would bypass the callable's declaration/claimant
-      // validation and let anyone forge a claim's status or artistId.
-      allow read: if isSignedIn() && (resource.data.reporterId == request.auth.uid || resource.data.artistId == request.auth.uid || isAdmin());
-      allow write: if false;
-    }
-    match /supportMessages/{docId} {
-      // Written only via submitSupportMessage/resolveSupportMessage (Admin SDK).
-      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow write: if false;
-    }
-    // payoutHolds/{artistId} — admin/system only. An active hold blocks new
-    // support/licence payment checkout sessions from being created for this
-    // artist (see functions/src/support/checkout.ts and
-    // functions/src/stripe/licencePayment.ts); artists can see their own
-    // hold status but never set it.
-    match /payoutHolds/{artistId} {
-      allow read: if isSelf(artistId) || isAdmin();
-      allow write: if false;
-    }
-    match /auditLogs/{docId} {
-      allow read: if isAdmin();
-      allow write: if false;
-    }
-
-    // securityIncidents/{incidentId} — the breach register described in
-    // SECURITY_INCIDENT_RESPONSE.md. Admin-only, written exclusively via
-    // adminCreateSecurityIncident/adminUpdateSecurityIncident.
-    match /securityIncidents/{docId} {
-      allow read: if isAdmin();
-      allow write: if false;
-    }
-
-    // legalAcceptances/{userId}_{docType}_{version} — append-only. The
-    // rights-declaration variant is written by recordRightsDeclaration (a
-    // callable, so it can idempotency-guard); ToS/privacy acceptance has no
-    // cross-doc validation to enforce, so a direct client write is fine.
-    match /legalAcceptances/{docId} {
-      allow read: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if false;
     }
   }
 }

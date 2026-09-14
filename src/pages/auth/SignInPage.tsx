@@ -3,34 +3,22 @@ import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-do
 import { AuthLayout } from './AuthLayout'
 import { Input, Label } from '@/components/common/Input'
 import { Button } from '@/components/common/Button'
-import { signInWithEmail, signOut } from '@/services/authService'
+import { signInWithEmail } from '@/services/authService'
 import { friendlyAuthError } from '@/utils/authErrors'
-import { ensureUserDocument, getUserProfile } from '@/services/userService'
+import { ensureUserDocument } from '@/services/userService'
 import { isSafeReturnPath } from '@/utils/returnTo'
-import { workspaceHomeForRoles } from '@/lib/workspaceRoute'
 import { useSeo } from '@/lib/seo'
 import type { User } from 'firebase/auth'
 
-const SUSPENDED_MESSAGE = 'This account has been suspended. Contact support if you believe this is a mistake.'
-
-/** Thrown to short-circuit sign-in for a suspended account before it ever reaches a protected route. */
-class SuspendedAccountError extends Error {}
-
 async function dashboardAfterSignIn(user: User): Promise<string> {
   await ensureUserDocument(user)
-  const profile = await getUserProfile(user.uid)
-  if (profile?.suspended) {
-    await signOut()
-    throw new SuspendedAccountError(SUSPENDED_MESSAGE)
-  }
-  if (!profile?.onboardingComplete) return '/onboarding'
-  return workspaceHomeForRoles(profile.roles)
+  return '/app/home'
 }
 
 export function SignInPage() {
   useSeo({
     title: 'Sign In',
-    description: 'Sign in to BackTheVibes to listen, follow and support artists, or manage your artist or DJ profile.',
+    description: 'Sign in to My Music to search, save and play your personal music library.',
     path: '/sign-in',
   })
   const navigate = useNavigate()
@@ -54,7 +42,7 @@ export function SignInPage() {
       const credential = await signInWithEmail(email, password)
       navigate(redirectTo ?? (await dashboardAfterSignIn(credential.user)))
     } catch (err) {
-      setError(err instanceof SuspendedAccountError ? err.message : friendlyAuthError(err))
+      setError(friendlyAuthError(err))
     } finally {
       setLoading(false)
     }

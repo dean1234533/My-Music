@@ -1,138 +1,14 @@
 rules_version = '2';
 
+// My Music has no client-facing Storage usage at all. Tracks are YouTube
+// links (no hosted audio/artwork upload pipeline), and the one remaining
+// path — exports/{uid}/*.json, written by the exportUserData Cloud Function
+// (functions/src/account/exportUserData.ts) — is only ever accessed through
+// a short-lived signed URL handed back by that callable, never a direct
+// client read/write. So every path is denied to clients.
 service firebase.storage {
   match /b/{bucket}/o {
-
-    function isSignedIn() {
-      return request.auth != null;
-    }
-
-    function isOwner(artistId) {
-      return isSignedIn() && request.auth.uid == artistId;
-    }
-
-    // Story audio clips are the only remaining audio uploads — tracks
-    // themselves are YouTube links, never hosted audio.
-    function underAudioUploadLimit() {
-      return request.resource.size < 40 * 1024 * 1024;
-    }
-
-    function isCompressedAudio() {
-      return request.resource.contentType in [
-        'audio/mpeg', 'audio/mp4', 'audio/aac', 'audio/x-m4a', 'audio/ogg', 'audio/opus', 'audio/webm'
-      ];
-    }
-
-    function underImageUploadLimit() {
-      return request.resource.size < 8 * 1024 * 1024;
-    }
-
-    // Deliberately excludes image/svg+xml: an SVG can carry embedded <script>/
-    // event-handler content, and browsers execute it when an SVG URL is
-    // opened directly (e.g. an admin opening copyright evidence in a new
-    // tab) rather than only when embedded as an <img>. No genuine use case
-    // here (artwork/avatars/story media/evidence) needs vector uploads.
-    function isImage() {
-      return request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-    }
-
-    function isVideo() {
-      return request.resource.contentType.matches('video/.*');
-    }
-
-    function underVideoUploadLimit() {
-      return request.resource.size < 100 * 1024 * 1024;
-    }
-
-    // Public artwork — anyone can view, only the owning artist can upload.
-    match /artists/{artistId}/artwork/{fileName} {
-      allow read: if true;
-      allow write: if isOwner(artistId) && underImageUploadLimit() && isImage();
-    }
-
-    // No hosted track audio: tracks are YouTube links, never uploaded
-    // files. There is deliberately no /originals/, /streaming/, /previews/,
-    // or /dj-previews/ path — a track's only playable asset lives on
-    // YouTube, and master/stem exchange for an agreed deal happens outside
-    // the platform (see functions/src/licensing/downloads.ts).
-
-    function isStoryMedia() {
-      return isImage() || isVideo() || isCompressedAudio();
-    }
-
-    // Story tier is baked directly into the path (unlike tracks, which need
-    // a Firestore visibility lookup) — no cross-service read needed for the
-    // public/followers/supporters tiers, keeping this far simpler than the
-    // streaming/previews checks above.
-    match /artists/{artistId}/stories/public/{fileName} {
-      allow read: if true;
-      allow write: if isOwner(artistId) && underVideoUploadLimit() && isStoryMedia();
-    }
-    // followers/supporters/dj tiers are owner-only at Storage — cross-service
-    // firestore.get()/exists() calls from Storage rules don't work in this
-    // project (Firestore and the Storage bucket aren't in the same
-    // location; every such call here silently fails closed regardless of
-    // the logic). Entitled reads go through getStoryMediaUrl, which checks
-    // the same follows/supportRelationships/storiesDjEnabled conditions
-    // from a Cloud Function instead and hands back a short-lived signed
-    // URL — also fixing the separate issue that a permanent
-    // getDownloadURL() token, once stored on the story doc, would keep
-    // working after the viewer unfollowed/lost entitlement.
-    match /artists/{artistId}/stories/followers/{fileName} {
-      allow read: if isOwner(artistId);
-      allow write: if isOwner(artistId) && underVideoUploadLimit() && isStoryMedia();
-    }
-    match /artists/{artistId}/stories/supporters/{fileName} {
-      allow read: if isOwner(artistId);
-      allow write: if isOwner(artistId) && underVideoUploadLimit() && isStoryMedia();
-    }
-    match /artists/{artistId}/stories/dj/{fileName} {
-      allow read: if isOwner(artistId);
-      allow write: if isOwner(artistId) && underVideoUploadLimit() && isStoryMedia();
-    }
-
-    // User avatar / profile image uploads.
-    match /users/{userId}/profile/{fileName} {
-      allow read: if true;
-      allow write: if isSignedIn() && request.auth.uid == userId && underImageUploadLimit() && isImage();
-    }
-
-    // Copyright claim evidence — claim filing is intentionally open to
-    // anyone (per submitCopyrightClaim), so the claimId is generated
-    // client-side and evidence uploaded here before the claim doc itself is
-    // written; only the claimant (once the claim exists) or an admin can
-    // read it back. Images or PDFs, same size ceiling as images.
-    // Cross-service firestore.get()/exists() calls don't work in this
-    // project (see the previews/streaming comment above) — every branch
-    // below that depended on one always fails closed regardless of the
-    // actual claim/agreement state. Reads now go through
-    // getCopyrightEvidenceUrls (Admin SDK, checks the claim's reporterId
-    // or admin role, then lists the prefix directly and signs URLs) rather
-    // than a client-readable rule. Writes drop the ownership pre-check —
-    // claimId is an unguessable fresh ID, and submitCopyrightClaim itself
-    // validates the claim before trusting anything uploaded here.
-    match /copyrightEvidence/{claimId}/{fileName} {
-      allow read: if false;
-      allow write: if isSignedIn() && underImageUploadLimit() &&
-        (isImage() || request.resource.contentType == 'application/pdf');
-    }
-
-    // licenceSignatures/{agreementId}/{fileName} — drawn e-signature images.
-    // ContractPage now renders these via getSignatureImageUrls (Admin SDK,
-    // checks the caller is a party to the agreement, returns short-lived
-    // signed URLs) rather than a client-readable rule — stays write-only
-    // here. agreementId is an unguessable fresh ID; signAgreement validates
-    // the signature reference server-side before relying on it.
-    match /licenceSignatures/{agreementId}/{fileName} {
-      allow read: if false;
-      allow write: if isSignedIn() && underImageUploadLimit() && isImage();
-    }
-
-    // exports/{uid}/{fileName} — user data exports (exportUserData). Never
-    // directly readable or writable by any client, even the owner — the
-    // callable hands back a short-lived signed URL instead, since this path
-    // can combine several collections' worth of personal data in one file.
-    match /exports/{uid}/{fileName} {
+    match /{allPaths=**} {
       allow read, write: if false;
     }
   }

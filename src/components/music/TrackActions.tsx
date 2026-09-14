@@ -1,54 +1,50 @@
 import { useEffect, useState } from 'react'
 import { Heart, ListPlus } from 'lucide-react'
 import { clsx } from 'clsx'
-import { useLocation } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { useToast } from '@/contexts/ToastContext'
-import { likeTrack, subscribeIsLiked, unlikeTrack } from '@/services/likeService'
+import { addFavorite, isFavorite, removeFavorite } from '@/services/favoriteService'
 import { PlaylistPickerModal } from '@/components/music/PlaylistPickerModal'
 import type { TrackDoc } from '@/types/track'
 
 export function TrackActions({ track, labels = false }: { track: TrackDoc; labels?: boolean }) {
-  const { firebaseUser, hasRole } = useAuth()
+  const { firebaseUser } = useAuth()
   const { notify } = useToast()
-  const location = useLocation()
-  const [liked, setLiked] = useState(false)
+  const [favorited, setFavorited] = useState(false)
   const [pending, setPending] = useState(false)
   const [showPlaylistPicker, setShowPlaylistPicker] = useState(false)
 
   useEffect(() => {
     if (!firebaseUser) {
-      setLiked(false)
+      setFavorited(false)
       return
     }
-    return subscribeIsLiked(firebaseUser.uid, track.trackId, setLiked)
+    let cancelled = false
+    void isFavorite(firebaseUser.uid, track.trackId).then((value) => {
+      if (!cancelled) setFavorited(value)
+    })
+    return () => {
+      cancelled = true
+    }
   }, [firebaseUser, track.trackId])
 
-  // Liking/playlists are fan-only (mirrors crates being dj-only) — hide the controls
-  // entirely instead of showing a dead-end button. This covers three cases: a signed-out
-  // visitor (no account at all — user-reported on a public artist profile page: "you can
-  // at the track to your playlist but it is just a clip plus pointless as you have not
-  // even got a account"), a signed-in artist/dj account, and an admin account currently
-  // browsing its own artist/dj/admin management workspace — admin accounts are exempt
-  // from the one-role-per-account rule and can genuinely hold fan+artist+dj together, so
-  // a role check alone doesn't hide these while "acting as an artist" (user-reported:
-  // "the like/playlist bit is still showing when i play a track as an artist").
-  const inManagementWorkspace = /^\/(dashboard\/artist|dj|admin)(\/|$)/.test(location.pathname)
-  if (!firebaseUser || !hasRole('fan') || inManagementWorkspace) return null
+  if (!firebaseUser) return null
 
-  async function toggleLike() {
+  async function toggleFavorite() {
     if (!firebaseUser || pending) return
     setPending(true)
     try {
-      if (liked) {
-        await unlikeTrack(firebaseUser.uid, track.trackId)
-        notify(`Removed “${track.title}” from your library.`, 'info')
+      if (favorited) {
+        await removeFavorite(firebaseUser.uid, track.trackId)
+        setFavorited(false)
+        notify(`Removed “${track.title}” from favourites.`, 'info')
       } else {
-        await likeTrack(firebaseUser.uid, track.trackId)
-        notify(`Saved “${track.title}” to your library.`)
+        await addFavorite(firebaseUser.uid, track.trackId)
+        setFavorited(true)
+        notify(`Added “${track.title}” to favourites.`)
       }
     } catch {
-      notify('Could not update your library. Please try again.', 'error')
+      notify('Could not update favourites. Please try again.', 'error')
     } finally {
       setPending(false)
     }
@@ -63,14 +59,14 @@ export function TrackActions({ track, labels = false }: { track: TrackDoc; label
       <div className="flex items-center gap-2">
         <button
           type="button"
-          onClick={() => void toggleLike()}
+          onClick={() => void toggleFavorite()}
           disabled={pending}
-          className={clsx(baseClass, liked && 'border-danger-500/25 text-danger-500')}
-          aria-label={liked ? 'Remove from library' : 'Save to library'}
-          title={liked ? 'Remove from library' : 'Save to library'}
+          className={clsx(baseClass, favorited && 'border-danger-500/25 text-danger-500')}
+          aria-label={favorited ? 'Remove from favourites' : 'Add to favourites'}
+          title={favorited ? 'Remove from favourites' : 'Add to favourites'}
         >
-          <Heart size={17} className={clsx(liked && 'fill-current')} />
-          {labels ? <span>{liked ? 'Saved' : 'Save'}</span> : null}
+          <Heart size={17} className={clsx(favorited && 'fill-current')} />
+          {labels ? <span>{favorited ? 'Favourited' : 'Favourite'}</span> : null}
         </button>
         <button
           type="button"

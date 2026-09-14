@@ -8,9 +8,11 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { FirebaseError } from 'firebase/app'
-import { getTrackYoutubeInfo, recordTrackPlay } from '@/services/trackService'
+import { markTrackUnavailable } from '@/services/trackService'
+import { recordPlay } from '@/services/historyService'
+import { getSettings } from '@/services/settingsService'
 import type { TrackDoc } from '@/types/track'
+import type { RepeatMode } from '@/types/settings'
 import { useAuth } from '@/contexts/AuthContext'
 import { useToast } from '@/contexts/ToastContext'
 import { setPlaybackActive } from '@/lib/playbackActivity'
@@ -18,26 +20,58 @@ import { loadYoutubeIframeApi } from '@/lib/youtubeIframeApi'
 
 interface PlayerContextValue {
   currentTrack: TrackDoc | null
+  /** Original, unshuffled queue order — what's persisted/displayed as "up next" ordering. */
   queue: TrackDoc[]
+  /** Actual playback order — equals `queue` unless shuffle is on. */
+  playOrder: TrackDoc[]
   isPlaying: boolean
   isLoading: boolean
   progressSec: number
   durationSec: number
   volume: number
-  /** Null until the entitlement check confirms this viewer may see the YouTube link — the server decided this, not the client. */
-  accessGranted: boolean
+  shuffle: boolean
+  repeat: RepeatMode
   /** Attach the mounted DOM node the official YouTube player renders into (owned by PlayerBar). */
   attachContainer: (el: HTMLDivElement | null) => void
   playTrack: (track: TrackDoc, queue?: TrackDoc[]) => void
+  /** Named wrappers around playTrack for call-site clarity — all three behave identically (play from the first track, queue the rest). */
+  playPlaylist: (tracks: TrackDoc[]) => void
+  playLikedSongs: (tracks: TrackDoc[]) => void
+  playLibrary: (tracks: TrackDoc[]) => void
+  playNext: (track: TrackDoc) => void
+  /** Jumps to a track already in the queue/play order without resetting the queue. */
+  playFromQueue: (trackId: string) => void
+  addToQueue: (track: TrackDoc) => void
+  addPlaylistToQueue: (tracks: TrackDoc[]) => void
+  removeFromQueue: (trackId: string) => void
+  clearQueue: () => void
   togglePlay: () => void
+  /** Pauses without unloading the current track — distinct from stop(). */
+  pause: () => void
+  resume: () => void
   seek: (seconds: number) => void
   next: () => void
   previous: () => void
-  closePlayer: () => void
+  /** Fully stops and tears down playback — distinct from pause, which keeps the track loaded. */
+  stop: () => void
   setVolume: (volume: number) => void
+  toggleShuffle: () => void
+  cycleRepeat: () => void
 }
 
 const PlayerContext = createContext<PlayerContextValue | undefined>(undefined)
+
+/** Pressing Previous restarts the current track once you're this far into it, rather than jumping back a track — standard music-player behaviour. */
+const PREVIOUS_RESTART_THRESHOLD_SEC = 3
+
+function shuffleArray<T>(items: T[]): T[] {
+  const copy = [...items]
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[copy[i], copy[j]] = [copy[j], copy[i]]
+  }
+  return copy
+}
 
 export function PlayerProvider({ children }: { children: ReactNode }) {
   const { firebaseUser } = useAuth()
@@ -45,33 +79,49 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const playerRef = useRef<YT.Player | null>(null)
   const progressIntervalRef = useRef<number | null>(null)
-  const previewCapSecRef = useRef<number | null>(null)
   const previousUserIdRef = useRef<string | null>(null)
-  const queueRef = useRef<TrackDoc[]>([])
+  const playOrderRef = useRef<TrackDoc[]>([])
   const currentTrackRef = useRef<TrackDoc | null>(null)
+  const progressSecRef = useRef(0)
+  const repeatRef = useRef<RepeatMode>('off')
+  const autoplayNextRef = useRef(true)
   const [currentTrack, setCurrentTrack] = useState<TrackDoc | null>(null)
   const [queue, setQueue] = useState<TrackDoc[]>([])
+  const [playOrder, setPlayOrder] = useState<TrackDoc[]>([])
   const [isPlaying, setIsPlaying] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [progressSec, setProgressSec] = useState(0)
   const [durationSec, setDurationSec] = useState(0)
-  const [volume, setVolumeState] = useState(85)
-  const [accessGranted, setAccessGranted] = useState(false)
+  const [volume, setVolumeState] = useState(80)
+  const [shuffle, setShuffle] = useState(false)
+  const [repeat, setRepeat] = useState<RepeatMode>('off')
 
   useEffect(() => {
-    queueRef.current = queue
-  }, [queue])
+    playOrderRef.current = playOrder
+  }, [playOrder])
 
   useEffect(() => {
     currentTrackRef.current = currentTrack
   }, [currentTrack])
 
   useEffect(() => {
-    // Also counts as "active" while a track is still loading/access-checking, not only once
-    // it reaches PLAYING — otherwise a service worker update landing in that brief window
-    // reloads the page out from under the very click that just started it (user-reported: a
-    // track "not playing" turned out to be the reload racing the click, most visible on a
-    // public profile page where every play attempt has to round-trip an access check first).
+    progressSecRef.current = progressSec
+  }, [progressSec])
+
+  useEffect(() => {
+    repeatRef.current = repeat
+  }, [repeat])
+
+  useEffect(() => {
+    if (!firebaseUser) return
+    void getSettings(firebaseUser.uid).then((settings) => {
+      setVolumeState(settings.defaultVolume)
+      setShuffle(settings.shuffleByDefault)
+      autoplayNextRef.current = settings.autoplayNext
+    })
+  }, [firebaseUser])
+
+  useEffect(() => {
     setPlaybackActive(isPlaying || isLoading)
     return () => setPlaybackActive(false)
   }, [isPlaying, isLoading])
@@ -93,12 +143,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     destroyPlayer()
     setCurrentTrack(null)
     setQueue([])
+    setPlayOrder([])
     setIsPlaying(false)
     setIsLoading(false)
     setProgressSec(0)
     setDurationSec(0)
-    setAccessGranted(false)
-    previewCapSecRef.current = null
   }, [destroyPlayer])
 
   useEffect(() => {
@@ -112,32 +161,42 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const stepQueueRef = useRef<(direction: 1 | -1) => void>(() => {})
 
+  /**
+   * Reflects a track's newly-discovered unavailable state into every place
+   * it's currently held in memory (not just Firestore), so the "no longer
+   * available" indicator in PlayerBar/FullScreenPlayer shows immediately and
+   * persistently — previously this only surfaced as a toast that vanished,
+   * while currentTrack kept reporting unavailable: false since it was never
+   * re-read from Firestore after the write.
+   */
+  const markUnavailableLocally = useCallback((trackId: string) => {
+    const patch = (list: TrackDoc[]) => list.map((t) => (t.trackId === trackId ? { ...t, unavailable: true } : t))
+    setCurrentTrack((prev) => (prev && prev.trackId === trackId ? { ...prev, unavailable: true } : prev))
+    setQueue(patch)
+    setPlayOrder(patch)
+  }, [])
+
   const loadAndPlay = useCallback(async (track: TrackDoc) => {
     setIsLoading(true)
-    setAccessGranted(false)
     stopProgressPolling()
     try {
-      // getTrackYoutubeInfo is the only place the app ever discloses a
-      // track's YouTube link to a viewer who isn't its owner/admin — the
-      // same public/followers/supporters/dj_only/private ladder that used
-      // to gate hosted audio now gates whether we reveal the video ID. A
-      // locked-but-previewable track (followers/supporters/early_access)
-      // still hands back the video ID, flagged previewOnly, so the visitor
-      // gets a real short taste instead of nothing at all (user-reported:
-      // "even thogh it is set to followers, on profile 30 sec or so
-      // preveiw everyone should be able to listen").
-      const { youtubeVideoId, previewOnly, previewSeconds } = await getTrackYoutubeInfo(track)
-      setAccessGranted(!previewOnly)
-      previewCapSecRef.current = previewOnly && previewSeconds ? previewSeconds : null
-      const container = containerRef.current
-      if (!container) throw new Error('Player is not ready yet.')
+      // PlayerBar mounts its ref'd container as soon as the app loads (it's always
+      // rendered, just visually hidden until a track exists), so this should already be
+      // set — but a few retries guard against any remaining first-paint timing edge case
+      // rather than failing outright the instant a user presses play.
+      let container = containerRef.current
+      for (let attempt = 0; !container && attempt < 10; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        container = containerRef.current
+      }
+      if (!container) throw new Error('Player is not ready yet — please try again.')
 
       const YT = await loadYoutubeIframeApi()
       destroyPlayer()
 
       await new Promise<void>((resolve, reject) => {
         playerRef.current = new YT.Player(container, {
-          videoId: youtubeVideoId,
+          videoId: track.youtubeVideoId,
           host: 'https://www.youtube-nocookie.com',
           playerVars: { rel: 0, modestbranding: 1, playsinline: 1 },
           events: {
@@ -149,21 +208,28 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
               event.target.playVideo()
               resolve()
             },
-            onError: () => reject(new Error('This video is unavailable on YouTube.')),
+            onError: (event) => {
+              // 2 invalid param, 5 HTML5 error, 100 not found/removed, 101/150 embedding disabled.
+              const code = event.data
+              const message =
+                code === 100
+                  ? 'This track is no longer available on YouTube.'
+                  : code === 101 || code === 150
+                    ? 'The owner has disabled embedded playback for this track.'
+                    : 'This track could not be played.'
+              if (code === 100 || code === 101 || code === 150) {
+                markUnavailableLocally(track.trackId)
+                void markTrackUnavailable(track.trackId).catch(() => {})
+              }
+              reject(new Error(message))
+            },
             onStateChange: (event) => {
               if (event.data === YT.PlayerState.PLAYING) {
                 setIsPlaying(true)
                 setDurationSec(event.target.getDuration() || 0)
                 stopProgressPolling()
                 progressIntervalRef.current = window.setInterval(() => {
-                  const current = playerRef.current?.getCurrentTime() ?? 0
-                  setProgressSec(current)
-                  const cap = previewCapSecRef.current
-                  if (cap !== null && current >= cap) {
-                    playerRef.current?.pauseVideo()
-                    stopProgressPolling()
-                    notify('Preview ended — follow the artist to hear the full track.', 'info')
-                  }
+                  setProgressSec(playerRef.current?.getCurrentTime() ?? 0)
                 }, 500)
               } else if (event.data === YT.PlayerState.PAUSED) {
                 setIsPlaying(false)
@@ -171,39 +237,109 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
               } else if (event.data === YT.PlayerState.ENDED) {
                 setIsPlaying(false)
                 stopProgressPolling()
-                void recordTrackPlay(track.trackId).catch(() => {})
-                stepQueueRef.current(1)
+                if (repeatRef.current === 'track') {
+                  void loadAndPlay(track)
+                } else if (autoplayNextRef.current) {
+                  stepQueueRef.current(1)
+                }
               }
             },
           },
         })
       })
 
-      void recordTrackPlay(track.trackId).catch(() => {
-        // Best-effort analytics — playback should not fail if this errors.
-      })
+      if (firebaseUser) void recordPlay(firebaseUser.uid, track.trackId).catch(() => {})
     } catch (error) {
       setIsPlaying(false)
-      const message = error instanceof FirebaseError && error.code === 'functions/permission-denied'
-        ? 'This track is not available to you yet.'
-        : error instanceof Error ? error.message : 'This track is not available to play.'
-      notify(message, 'error')
+      notify(error instanceof Error ? error.message : 'This track is not available to play.', 'error')
     } finally {
       setIsLoading(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [destroyPlayer, notify, stopProgressPolling, volume])
+  }, [destroyPlayer, firebaseUser, notify, stopProgressPolling, volume])
+
+  const buildPlayOrder = useCallback((newQueue: TrackDoc[], startTrack: TrackDoc) => {
+    if (!shuffle) return newQueue
+    const rest = newQueue.filter((t) => t.trackId !== startTrack.trackId)
+    return [startTrack, ...shuffleArray(rest)]
+  }, [shuffle])
 
   const playTrack = useCallback(
     (track: TrackDoc, nextQueue?: TrackDoc[]) => {
+      const resolvedQueue = nextQueue ?? [track]
       setCurrentTrack(track)
-      setQueue(nextQueue ?? [track])
+      setQueue(resolvedQueue)
+      setPlayOrder(buildPlayOrder(resolvedQueue, track))
       setProgressSec(0)
       setDurationSec(0)
       void loadAndPlay(track)
     },
-    [loadAndPlay],
+    [buildPlayOrder, loadAndPlay],
   )
+
+  /**
+   * These four mutators apply the *same* structural change to both `queue`
+   * and `playOrder` independently, rather than ever resetting playOrder back
+   * to queue's order. Since both lists start out equal (or, under shuffle,
+   * playOrder starts as a permutation of queue), applying identical
+   * append/insert/remove operations to both keeps them in sync — unshuffled
+   * sessions stay unshuffled, and a shuffled session's existing order is
+   * never silently discarded just because the queue was edited (spec:
+   * shuffle must survive queue mutations; adding a song must never look like
+   * a reshuffle).
+   */
+  const playNext = useCallback((track: TrackDoc) => {
+    const current = currentTrackRef.current
+    const insertAfterCurrent = (list: TrackDoc[]): TrackDoc[] => {
+      const withoutTrack = list.filter((t) => t.trackId !== track.trackId)
+      const index = current ? withoutTrack.findIndex((t) => t.trackId === current.trackId) : -1
+      const next = [...withoutTrack]
+      next.splice(index + 1, 0, track)
+      return next
+    }
+    setQueue(insertAfterCurrent)
+    setPlayOrder(insertAfterCurrent)
+  }, [])
+
+  const addToQueue = useCallback((track: TrackDoc) => {
+    const append = (list: TrackDoc[]): TrackDoc[] =>
+      list.some((t) => t.trackId === track.trackId) ? list : [...list, track]
+    setQueue(append)
+    setPlayOrder(append)
+  }, [])
+
+  /** Appends every track not already queued, in order, to the end of the queue. */
+  const addPlaylistToQueue = useCallback((tracks: TrackDoc[]) => {
+    const append = (list: TrackDoc[]): TrackDoc[] => {
+      const existingIds = new Set(list.map((t) => t.trackId))
+      const additions = tracks.filter((t) => !existingIds.has(t.trackId))
+      return additions.length === 0 ? list : [...list, ...additions]
+    }
+    setQueue(append)
+    setPlayOrder(append)
+  }, [])
+
+  const removeFromQueue = useCallback((trackId: string) => {
+    const remove = (list: TrackDoc[]): TrackDoc[] => list.filter((t) => t.trackId !== trackId)
+    setQueue(remove)
+    setPlayOrder(remove)
+  }, [])
+
+  /** Jumps to a specific track already sitting in the current queue/play order, without altering the queue itself — distinct from playTrack, which starts a brand-new queue. */
+  const playFromQueue = useCallback((trackId: string) => {
+    const track = playOrderRef.current.find((t) => t.trackId === trackId) ?? queue.find((t) => t.trackId === trackId)
+    if (!track) return
+    setCurrentTrack(track)
+    setProgressSec(0)
+    setDurationSec(0)
+    void loadAndPlay(track)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queue, loadAndPlay])
+
+  const clearQueue = useCallback(() => {
+    setQueue([])
+    setPlayOrder([])
+  }, [])
 
   const togglePlay = useCallback(() => {
     const player = playerRef.current
@@ -215,6 +351,22 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
   }, [currentTrack, isPlaying])
 
+  const pause = useCallback(() => {
+    playerRef.current?.pauseVideo()
+  }, [])
+
+  const resume = useCallback(() => {
+    playerRef.current?.playVideo()
+  }, [])
+
+  /** Plays a playlist/liked-songs/library list from its first track, queuing the rest. Thin, named wrappers around playTrack for call-site clarity. */
+  const playPlaylist = useCallback((tracks: TrackDoc[]) => {
+    if (tracks.length === 0) return
+    playTrack(tracks[0], tracks)
+  }, [playTrack])
+  const playLikedSongs = playPlaylist
+  const playLibrary = playPlaylist
+
   const seek = useCallback((seconds: number) => {
     playerRef.current?.seekTo(seconds, true)
     setProgressSec(seconds)
@@ -223,27 +375,70 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const stepQueue = useCallback(
     (direction: 1 | -1) => {
       const current = currentTrackRef.current
-      const currentQueue = queueRef.current
-      if (!current || currentQueue.length === 0) return
-      const index = currentQueue.findIndex((t) => t.trackId === current.trackId)
-      const nextIndex = index + direction
-      const nextTrack = currentQueue[nextIndex]
-      if (!nextTrack) return
+      const order = playOrderRef.current
+      if (!current || order.length === 0) return
+      const index = order.findIndex((t) => t.trackId === current.trackId)
+      let nextIndex = index + direction
+      if (repeatRef.current === 'queue') {
+        nextIndex = (nextIndex + order.length) % order.length
+      }
+      const nextTrack = order[nextIndex]
+      if (!nextTrack) {
+        resetState()
+        return
+      }
       setCurrentTrack(nextTrack)
+      setProgressSec(0)
+      setDurationSec(0)
       void loadAndPlay(nextTrack)
     },
-    [loadAndPlay],
+    [loadAndPlay, resetState],
   )
   stepQueueRef.current = stepQueue
 
   const next = useCallback(() => stepQueue(1), [stepQueue])
-  const previous = useCallback(() => stepQueue(-1), [stepQueue])
 
-  const closePlayer = useCallback(() => resetState(), [resetState])
+  /**
+   * Standard music-player behaviour: once meaningfully into a track,
+   * Previous restarts it rather than jumping back a track. Also restarts
+   * (rather than stopping) when there's genuinely nowhere earlier to go —
+   * pressing Previous at the very start of the queue should never just stop
+   * playback outright.
+   */
+  const previous = useCallback(() => {
+    const current = currentTrackRef.current
+    const order = playOrderRef.current
+    if (!current) return
+    const index = order.findIndex((t) => t.trackId === current.trackId)
+    const hasEarlierTrack = index > 0 || (repeatRef.current === 'queue' && order.length > 1)
+    if (progressSecRef.current > PREVIOUS_RESTART_THRESHOLD_SEC || !hasEarlierTrack) {
+      seek(0)
+      return
+    }
+    stepQueue(-1)
+  }, [seek, stepQueue])
+
+  const stop = useCallback(() => resetState(), [resetState])
 
   const setVolume = useCallback((value: number) => {
     setVolumeState(value)
     playerRef.current?.setVolume(value)
+  }, [])
+
+  const toggleShuffle = useCallback(() => {
+    setShuffle((prev) => {
+      const nextShuffle = !prev
+      const current = currentTrackRef.current
+      if (current) {
+        setPlayOrder(nextShuffle ? buildPlayOrder(queue, current) : queue)
+      }
+      return nextShuffle
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queue, buildPlayOrder])
+
+  const cycleRepeat = useCallback(() => {
+    setRepeat((prev) => (prev === 'off' ? 'queue' : prev === 'queue' ? 'track' : 'off'))
   }, [])
 
   const attachContainer = useCallback((el: HTMLDivElement | null) => {
@@ -254,38 +449,68 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     () => ({
       currentTrack,
       queue,
+      playOrder,
       isPlaying,
       isLoading,
       progressSec,
       durationSec,
       volume,
-      accessGranted,
+      shuffle,
+      repeat,
       attachContainer,
       playTrack,
+      playPlaylist,
+      playLikedSongs,
+      playLibrary,
+      playNext,
+      playFromQueue,
+      addToQueue,
+      addPlaylistToQueue,
+      removeFromQueue,
+      clearQueue,
       togglePlay,
+      pause,
+      resume,
       seek,
       next,
       previous,
-      closePlayer,
+      stop,
       setVolume,
+      toggleShuffle,
+      cycleRepeat,
     }),
     [
       currentTrack,
       queue,
+      playOrder,
       isPlaying,
       isLoading,
       progressSec,
       durationSec,
       volume,
-      accessGranted,
+      shuffle,
+      repeat,
       attachContainer,
       playTrack,
+      playPlaylist,
+      playLikedSongs,
+      playLibrary,
+      playNext,
+      playFromQueue,
+      addToQueue,
+      addPlaylistToQueue,
+      removeFromQueue,
+      clearQueue,
       togglePlay,
+      pause,
+      resume,
       seek,
       next,
       previous,
-      closePlayer,
+      stop,
       setVolume,
+      toggleShuffle,
+      cycleRepeat,
     ],
   )
 

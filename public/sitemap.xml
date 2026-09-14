@@ -1,111 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
-    <loc>https://backthevibes.com/</loc>
+    <loc>https://mymusic.app/</loc>
     <priority>1.0</priority>
   </url>
   <url>
-    <loc>https://backthevibes.com/pricing</loc>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://backthevibes.com/for-djs</loc>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://backthevibes.com/for-artists</loc>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://backthevibes.com/tools</loc>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://backthevibes.com/tools/release-planner</loc>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://backthevibes.com/tools/artist-bio-generator</loc>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://backthevibes.com/tools/dj-licence-request</loc>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://backthevibes.com/tools/dj-name-generator</loc>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://backthevibes.com/tools/song-title-generator</loc>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://backthevibes.com/tools/royalty-calculator</loc>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://backthevibes.com/tools/bpm-key-finder</loc>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://backthevibes.com/tools/playlist-pitch-template</loc>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://backthevibes.com/tools/social-caption-generator</loc>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://backthevibes.com/tools/dj-setlist-planner</loc>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://backthevibes.com/tools/music-genre-guide</loc>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://backthevibes.com/blog</loc>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://backthevibes.com/terms</loc>
-    <priority>0.3</priority>
-  </url>
-  <url>
-    <loc>https://backthevibes.com/privacy</loc>
-    <priority>0.3</priority>
-  </url>
-  <url>
-    <loc>https://backthevibes.com/copyright</loc>
-    <priority>0.3</priority>
-  </url>
-  <url>
-    <loc>https://backthevibes.com/sign-in</loc>
+    <loc>https://mymusic.app/sign-in</loc>
     <priority>0.2</priority>
   </url>
   <url>
-    <loc>https://backthevibes.com/sign-up</loc>
+    <loc>https://mymusic.app/sign-up</loc>
     <priority>0.4</priority>
-  </url>
-  <url>
-    <loc>https://backthevibes.com/blog/how-djs-license-tracks-legally</loc>
-    <lastmod>2026-08-01</lastmod>
-    <priority>0.6</priority>
-  </url>
-  <url>
-    <loc>https://backthevibes.com/blog/how-independent-artists-get-paid</loc>
-    <lastmod>2026-08-08</lastmod>
-    <priority>0.6</priority>
-  </url>
-  <url>
-    <loc>https://backthevibes.com/blog/building-an-ethical-dj-crate</loc>
-    <lastmod>2026-08-15</lastmod>
-    <priority>0.6</priority>
-  </url>
-  <url>
-    <loc>https://backthevibes.com/blog/why-independent-music-discovery-feels-broken</loc>
-    <lastmod>2026-08-22</lastmod>
-    <priority>0.6</priority>
   </url>
 </urlset>

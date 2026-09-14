@@ -1,35 +1,5 @@
-import {
-  AlertTriangle,
-  BadgeCheck,
-  BarChart3,
-  Bell,
-  Compass,
-  Disc3,
-  FileClock,
-  FileText,
-  Gift,
-  Handshake,
-  Heart,
-  Home,
-  Layers,
-  LifeBuoy,
-  Library,
-  LineChart,
-  ListMusic,
-  MessageSquare,
-  Radar,
-  Search,
-  Settings,
-  Share2,
-  ShieldAlert,
-  Sliders,
-  UploadCloud,
-  User,
-  Users,
-  Wallet,
-} from 'lucide-react'
+import { Home, Library, ListMusic, Search, Settings } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { MusicGlyph } from '@/components/common/MusicGlyph'
 import type { ComponentType, SVGProps } from 'react'
 
 export interface NavItem {
@@ -39,62 +9,13 @@ export interface NavItem {
   end?: boolean
 }
 
-// Order matters: MobileNav shows the first `mobilePrimaryCount` items as
-// persistent bottom tabs and puts the rest behind a "More" sheet, so the
-// most-used destinations for that role should come first. Desktop's
-// Sidebar shows the full list in this same order regardless.
-export const fanNavItems: NavItem[] = [
+// Single nav for the single app — no more per-role dashboards to switch
+// between. Order matters: MobileNav shows these as persistent bottom tabs
+// (there's no overflow "More" sheet needed now that there are only five).
+export const appNavItems: NavItem[] = [
   { label: 'Home', to: '/app/home', icon: Home, end: true },
-  { label: 'Discover', to: '/app/discover', icon: Compass },
   { label: 'Search', to: '/app/search', icon: Search },
   { label: 'Library', to: '/app/library', icon: Library },
-  { label: 'Following', to: '/app/following', icon: Users },
-  { label: 'Supported', to: '/app/supported', icon: Heart },
-  { label: 'Offers', to: '/app/offers', icon: Gift },
   { label: 'Playlists', to: '/app/playlists', icon: ListMusic },
-  { label: 'My support', to: '/app/subscription', icon: Heart },
-  { label: 'Notifications', to: '/app/notifications', icon: Bell },
-  { label: 'Profile', to: '/app/profile', icon: User },
   { label: 'Settings', to: '/app/settings', icon: Settings },
-  { label: 'Support', to: '/support', icon: LifeBuoy },
-]
-/** Notifications/Profile already have a persistent shortcut in TopBar on mobile — no need for them in the "More" sheet too. */
-export const fanMobileMoreExclude = ['/app/notifications', '/app/profile']
-
-export const artistDashboardNavItems: NavItem[] = [
-  { label: 'Overview', to: '/dashboard/artist', icon: BarChart3, end: true },
-  { label: 'Music', to: '/dashboard/artist/music', icon: Disc3 },
-  { label: 'Upload', to: '/dashboard/artist/upload', icon: UploadCloud },
-  { label: 'Revenue', to: '/dashboard/artist/revenue', icon: Wallet },
-  { label: 'Share & Growth', to: '/dashboard/artist/growth', icon: Share2 },
-  { label: 'Stories', to: '/dashboard/artist/stories', icon: MusicGlyph },
-  { label: 'Community', to: '/dashboard/artist/community', icon: Users },
-  { label: 'Fan Offers', to: '/dashboard/artist/offers', icon: Gift },
-  { label: 'DJ Requests', to: '/dashboard/artist/dj-requests', icon: MessageSquare },
-  { label: 'DJ Deals', to: '/dashboard/artist/deals', icon: Handshake },
-  { label: 'Agreements', to: '/agreements', icon: FileText },
-  { label: 'Settings', to: '/dashboard/artist/settings', icon: Settings },
-  { label: 'Support', to: '/support', icon: LifeBuoy },
-]
-
-export const djNavItems: NavItem[] = [
-  { label: 'Discover', to: '/dj/discover', icon: Radar, end: true },
-  { label: 'Artists', to: '/dj/artists', icon: Users },
-  { label: 'Promos & requests', to: '/dj/requests', icon: MessageSquare },
-  { label: 'Sets', to: '/dj/sets', icon: Layers },
-  { label: 'Analytics', to: '/dj/analytics', icon: LineChart },
-  { label: 'Agreements', to: '/agreements', icon: FileText },
-  { label: 'Notifications', to: '/dj/notifications', icon: Bell },
-  { label: 'Settings', to: '/dj/profile', icon: Settings },
-  { label: 'Support', to: '/support', icon: LifeBuoy },
-]
-
-export const adminNavItems: NavItem[] = [
-  { label: 'Users', to: '/admin/users', icon: Users, end: true },
-  { label: 'Verification', to: '/admin/verification', icon: BadgeCheck },
-  { label: 'Reports', to: '/admin/reports', icon: AlertTriangle },
-  { label: 'Notifications', to: '/admin/notifications', icon: Bell },
-  { label: 'Plans & fees', to: '/admin/settings', icon: Sliders },
-  { label: 'Audit log', to: '/admin/audit-log', icon: FileClock },
-  { label: 'Security incidents', to: '/admin/security-incidents', icon: ShieldAlert },
 ]

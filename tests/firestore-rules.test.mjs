@@ -4,35 +4,97 @@ import test from 'node:test'
 
 const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8')
 
-test('a regular user can only set roles once at initial signup — no self-service add or remove afterward; only an admin account can change its own roles later', () => {
-  // Non-admin, first-ever write (roles still []): may set exactly one of fan/artist/dj, once —
-  // a regular account keeps that single role for life (one role per account, not "a subset of").
-  assert.match(rules, /resource\.data\.roles\.size\(\) == 0 && request\.resource\.data\.roles\.size\(\) == 1 && request\.resource\.data\.roles\.hasOnly\(\['fan', 'artist', 'dj'\]\)/)
-  // Non-admin, already onboarded: roles field is frozen exactly as-is on this path.
-  assert.match(rules, /resource\.data\.roles\.hasOnly\(\['fan', 'artist', 'dj'\]\) && request\.resource\.data\.roles == resource\.data\.roles/)
-  // The admin branch: 'admin' must be present both before and after the write,
-  // and with it stripped from both sides the remainder must still be only fan/artist/dj —
-  // so an admin account can step in/out of fan/artist/dj like anyone else, but this
-  // client-writable path can never itself add or remove 'admin'.
-  assert.match(rules, /resource\.data\.roles\.hasAny\(\['admin'\]\)[\s\S]*?request\.resource\.data\.roles\.hasAny\(\['admin'\]\)[\s\S]*?request\.resource\.data\.roles\.removeAll\(\['admin'\]\)\.hasOnly\(\['fan', 'artist', 'dj'\]\)/)
-  assert.match(rules, /subscriptionStatus == resource\.data\.subscriptionStatus/)
-  assert.match(rules, /stripeCustomerId[\s\S]*?== resource\.data/)
+function blockFor(collectionPath) {
+  const start = rules.indexOf(`match /${collectionPath}`)
+  assert.notEqual(start, -1, `no rule block found for ${collectionPath}`)
+  // Grab a generous chunk after the match line — enough to cover the whole block
+  // without needing full brace-matching for these small, flat rule blocks.
+  return rules.slice(start, start + 1200)
+}
+
+test('a user can read/write their own playlists but not another user\'s', () => {
+  const block = blockFor('playlists/{playlistId}')
+  assert.match(block, /allow read, update, delete: if isOwner\(resource\.data\.ownerId\)/)
+  assert.match(block, /allow create: if isOwner\(request\.resource\.data\.ownerId\)/)
+  // isOwner() ties access to request.auth.uid matching the ownerId field, not
+  // just "any signed-in user" — so someone else's playlist can never match.
+  assert.match(rules, /function isOwner\(field\) \{\s*return isSignedIn\(\) && request\.auth\.uid == field;/)
 })
 
-test('original tracks and signed agreement records are not client writable', () => {
-  assert.match(rules, /match \/licenceAgreements\/\{docId\}[\s\S]*?allow write: if false/)
-  assert.match(rules, /match \/downloadLogs\/\{docId\}[\s\S]*?allow write: if false/)
+test('a user can read/write their own favorites but not another user\'s, and the doc ID must match ${uid}_${trackId}', () => {
+  const block = blockFor('favorites/{favoriteId}')
+  assert.match(block, /allow read, delete: if isOwner\(resource\.data\.uid\)/)
+  assert.match(block, /allow create: if isOwner\(request\.resource\.data\.uid\)/)
+  assert.match(block, /favoriteId == request\.resource\.data\.uid \+ '_' \+ request\.resource\.data\.trackId/)
+  assert.match(block, /allow update: if false/)
 })
 
-test('track delete is forced through the validating callable', () => {
-  const block = rules.match(/match \/tracks\/\{trackId\} \{([\s\S]*?)\n    \}/)?.[1] ?? ''
+test('a user can read/write their own savedTracks (independent library) but not another user\'s, and the doc ID must match ${uid}_${trackId}', () => {
+  const block = blockFor('savedTracks/{savedId}')
+  assert.match(block, /allow read, delete: if isOwner\(resource\.data\.uid\)/)
+  assert.match(block, /allow create: if isOwner\(request\.resource\.data\.uid\)/)
+  assert.match(block, /savedId == request\.resource\.data\.uid \+ '_' \+ request\.resource\.data\.trackId/)
+  assert.match(block, /allow update: if false/)
+})
+
+test('a user can create/read their own playHistory entries but not another user\'s, and cannot update an existing entry', () => {
+  const block = blockFor('playHistory/{historyId}')
+  assert.match(block, /allow read, delete: if isOwner\(resource\.data\.uid\)/)
+  assert.match(block, /allow create: if isOwner\(request\.resource\.data\.uid\)/)
+  assert.match(block, /allow update: if false/)
+})
+
+test('a user can read/write their own settings doc only', () => {
+  const block = blockFor('settings/{uid}')
+  assert.match(block, /allow read, write: if isSelf\(uid\)/)
+  assert.match(rules, /function isSelf\(uid\) \{\s*return isSignedIn\(\) && request\.auth\.uid == uid;/)
+})
+
+test('any authenticated user can create a tracks/{videoId} doc as long as the doc ID matches youtubeVideoId and is a valid 11-char YouTube ID, and cannot change identity fields after creation', () => {
+  const block = blockFor('tracks/{trackId}')
+  assert.match(block, /allow create: if isSignedIn\(\)/)
+  assert.match(block, /trackId == request\.resource\.data\.youtubeVideoId/)
+  assert.match(block, /trackId\.matches\('\^\[A-Za-z0-9_-\]\{11\}\$'\)/)
+  assert.match(block, /request\.resource\.data\.source == 'youtube'/)
+  // Identity fields frozen post-creation.
+  assert.match(block, /request\.resource\.data\.youtubeVideoId == resource\.data\.youtubeVideoId/)
+  assert.match(block, /request\.resource\.data\.source == resource\.data\.source/)
+  assert.match(block, /request\.resource\.data\.createdAt == resource\.data\.createdAt/)
+  // unavailable can only ever go false -> true, never back.
+  assert.match(block, /resource\.data\.get\('unavailable', false\) != true/)
+  assert.match(block, /request\.resource\.data\.unavailable == true/)
   assert.match(block, /allow delete: if false/)
 })
 
-test('admin data requires the admin role', () => {
-  for (const collection of ['auditLogs', 'securityIncidents', 'platformSettings']) {
-    const start = rules.indexOf(`match /${collection}`)
-    assert.notEqual(start, -1)
-    assert.match(rules.slice(start, start + 500), /isAdmin\(\)/)
+test('a signed-out user is denied everywhere', () => {
+  // Every owner-scoped collection routes through isSignedIn()/isSelf()/isOwner(), all of
+  // which require request.auth != null, and the catch-all denies everything unmatched.
+  for (const fn of ['isSignedIn', 'isSelf', 'isOwner']) {
+    assert.match(rules, new RegExp(`function ${fn}\\(`))
+  }
+  assert.match(rules, /function isSignedIn\(\) \{\s*return request\.auth != null;/)
+  assert.match(rules, /match \/\{document=\*\*\} \{\s*allow read, write: if false;/)
+})
+
+test('rateLimits is denied to all client access', () => {
+  const block = blockFor('rateLimits/{key}')
+  assert.match(block, /allow read, write: if false/)
+})
+
+test('users/{uid} allows owner read/update and a client fallback create matching the caller\'s own uid', () => {
+  const block = blockFor('users/{uid}')
+  assert.match(block, /allow read, update: if isSelf\(uid\)/)
+  assert.match(block, /allow create: if isSelf\(uid\) && request\.resource\.data\.uid == uid/)
+  assert.match(block, /allow delete: if false/)
+})
+
+test('no leftover marketplace collections are referenced', () => {
+  for (const collection of [
+    'artistProfiles', 'djProfiles', 'crates', 'follows', 'stories', 'licenceRequests',
+    'licenceOffers', 'licenceAgreements', 'subscriptions', 'fanOffers', 'notifications',
+    'reports', 'auditLogs', 'transactions', 'copyrightClaims', 'trackMedia', 'artistSlugs',
+    'artistPosts', 'trackSlugs', 'albums', 'blockedUsers', 'trackLikes',
+  ]) {
+    assert.doesNotMatch(rules, new RegExp(`match /${collection}/`))
   }
 })

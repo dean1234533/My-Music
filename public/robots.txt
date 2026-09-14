@@ -1,13 +1,5 @@
 User-agent: *
 Allow: /
 Disallow: /app/
-Disallow: /dashboard/
-Disallow: /dj/
-Disallow: /admin/
-Disallow: /onboarding/
 Disallow: /verify-email
 Disallow: /forgot-password
-Disallow: /agreements/
-Disallow: /requests/
-
-Sitemap: https://backthevibes.com/sitemap.xml

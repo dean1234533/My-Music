@@ -9,18 +9,18 @@ import { PasswordStrengthMeter } from '@/components/auth/PasswordStrengthMeter'
 import { friendlyAuthError } from '@/utils/authErrors'
 
 /**
- * Handles every Firebase Auth email action link (password reset, email
- * verification, email-change revert) on our own domain instead of the
- * default firebaseapp.com page — this is the page the Firebase Console's
+ * Handles every Firebase Auth email action link (password reset,
+ * email-change revert) on our own domain instead of the default
+ * firebaseapp.com page — this is the page the Firebase Console's
  * "Custom action URL" setting should point at. Firebase appends
  * ?mode=...&oobCode=...&apiKey=...&continueUrl=... itself; nothing here
- * needs to construct that link.
+ * needs to construct that link. There's no email-verification step in this
+ * app, so a verifyEmail-mode link (none are ever sent) isn't handled here.
  */
 export function AuthActionPage() {
   const [searchParams] = useSearchParams()
   const mode = searchParams.get('mode')
   const oobCode = searchParams.get('oobCode')
-  const continueUrl = searchParams.get('continueUrl')
 
   if (!oobCode) {
     return (
@@ -34,7 +34,6 @@ export function AuthActionPage() {
   }
 
   if (mode === 'resetPassword') return <ResetPasswordAction oobCode={oobCode} />
-  if (mode === 'verifyEmail') return <VerifyEmailAction oobCode={oobCode} continueUrl={continueUrl} />
   if (mode === 'recoverEmail') return <RecoverEmailAction oobCode={oobCode} />
 
   return (
@@ -149,52 +148,6 @@ function ResetPasswordAction({ oobCode }: { oobCode: string }) {
           Update password
         </Button>
       </form>
-    </AuthLayout>
-  )
-}
-
-function VerifyEmailAction({ oobCode, continueUrl }: { oobCode: string; continueUrl: string | null }) {
-  const [status, setStatus] = useState<'pending' | 'done' | 'error'>('pending')
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    applyActionCode(auth, oobCode)
-      .then(() => setStatus('done'))
-      .catch((err) => {
-        setStatus('error')
-        setError(friendlyAuthError(err))
-      })
-  }, [oobCode])
-
-  if (status === 'pending') {
-    return (
-      <AuthLayout title="Verifying your email">
-        <p className="text-sm text-ink-2">One moment…</p>
-      </AuthLayout>
-    )
-  }
-
-  if (status === 'error') {
-    return (
-      <AuthLayout title="This link isn't valid">
-        <p className="text-sm text-danger-500">{error}</p>
-        <BackToSignIn />
-      </AuthLayout>
-    )
-  }
-
-  return (
-    <AuthLayout title="Email verified">
-      <p className="text-sm text-ink-1">Your email address has been verified.</p>
-      <p className="mt-6 text-center text-sm text-ink-2">
-        {/* A safe, same-origin continueUrl (set by our own onboarding flow) is honoured; anything else falls back to sign-in. */}
-        <Link
-          to={continueUrl && continueUrl.startsWith(window.location.origin) ? continueUrl.slice(window.location.origin.length) || '/sign-in' : '/sign-in'}
-          className="font-medium text-brand-400 hover:underline"
-        >
-          Continue →
-        </Link>
-      </p>
     </AuthLayout>
   )
 }

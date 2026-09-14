@@ -62,13 +62,8 @@ export function DeleteAccountModal({ onClose }: { onClose: () => void }) {
     <Modal title="Delete account" onClose={onClose}>
       <div className="flex flex-col gap-4 text-sm">
         <p className="text-ink-1">
-          Deleting your account will permanently remove your profile, uploaded content, preferences, and other
-          personal data that we are not legally required to retain. Signed DJ licence agreements and financial
-          records you are a party to are kept for the periods described in our{' '}
-          <a href="/privacy" target="_blank" rel="noreferrer" className="text-brand-400 hover:underline">
-            privacy policy
-          </a>
-          .
+          Deleting your account will permanently remove your profile, playlists, favourites, play history, and
+          settings. This cannot be undone.
         </p>
 
         {!reauthenticated ? (
