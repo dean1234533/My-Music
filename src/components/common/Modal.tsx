@@ -3,7 +3,12 @@ import { X } from 'lucide-react'
 
 export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 sm:items-center sm:p-4" onClick={onClose}>
+    // z-[70]: above the mini player bar (z-50), the full-screen "Now playing" view (z-[60])
+    // and its floating video (z-[61]) — all of which share the same fixed-position layer and
+    // are always mounted, so a dialog at a lower/equal z-index gets painted over by whichever
+    // of those happens to come later in the DOM (this hid the "New playlist" input entirely
+    // behind the mini player bar).
+    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/60 p-0 sm:items-center sm:p-4" onClick={onClose}>
       <div
         className="max-h-[90svh] w-full overflow-y-auto rounded-t-2xl border border-surface-border bg-surface-1 p-5 sm:max-w-lg sm:rounded-2xl sm:p-6"
         onClick={(e) => e.stopPropagation()}

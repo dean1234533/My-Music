@@ -47,9 +47,15 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (value: boo
       onClick={() => onChange(!checked)}
       className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${checked ? 'bg-brand-500' : 'bg-white/[0.12]'}`}
     >
+      {/* Positioned with left/right (not a hardcoded translate-x-[22px] pixel offset) so the
+          knob always sits flush against whichever side is active, regardless of the track's
+          actual rendered size — a fixed pixel translate doesn't scale with the track's own
+          rem-based width, so on a larger text/zoom setting the "on" knob could overshoot the
+          track's real right edge and stick out past it (user-reported: "pushed off to the
+          right way too much"). */}
       <span
-        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
-          checked ? 'translate-x-[22px]' : 'translate-x-0.5'
+        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-[left,right] ${
+          checked ? 'left-[calc(100%-1.375rem)]' : 'left-0.5'
         }`}
       />
     </button>
