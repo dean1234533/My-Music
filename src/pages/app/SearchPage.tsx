@@ -167,11 +167,22 @@ export function SearchPage() {
     void runSearch(term)
   }
 
-  async function handlePlay(result: YoutubeSearchResult) {
+  /**
+   * `contextResults` is the whole list this result came from (the current search results,
+   * or an imported playlist's results) — playing queues that entire list, starting from the
+   * clicked track, so the track naturally advances into the next one when it ends instead of
+   * just stopping (user-reported: "tracks do not auto skip to the next track" — true only
+   * because a lone clicked result used to become a one-track queue with nothing to advance
+   * into). Every track in the list is saved to the shared metadata cache up front so the
+   * queue is made of real, playable tracks the same way a playlist/library queue already is.
+   */
+  async function handlePlay(result: YoutubeSearchResult, contextResults: YoutubeSearchResult[]) {
     setPendingAction(`play:${result.youtubeVideoId}`)
     try {
-      const track = await saveTrack(resultToSaveInput(result))
-      playTrack(track)
+      const list = contextResults.length > 0 ? contextResults : [result]
+      const tracks = await Promise.all(list.map((r) => saveTrack(resultToSaveInput(r))))
+      const clickedTrack = tracks.find((t) => t.trackId === result.youtubeVideoId) ?? tracks[0]
+      playTrack(clickedTrack, tracks)
     } catch {
       notify('Could not play this track. Please try again.', 'error')
     } finally {
@@ -340,7 +351,7 @@ export function SearchPage() {
 
   const showYoutubeSection = results !== null || loading || error !== null
 
-  function renderResultRow(result: YoutubeSearchResult) {
+  function renderResultRow(result: YoutubeSearchResult, contextResults: YoutubeSearchResult[]) {
     const alreadySaved = savedTrackIds.has(result.youtubeVideoId)
     return (
       <div
@@ -368,7 +379,7 @@ export function SearchPage() {
           <Button
             size="sm"
             variant="secondary"
-            onClick={() => void handlePlay(result)}
+            onClick={() => void handlePlay(result, contextResults)}
             loading={pendingAction === `play:${result.youtubeVideoId}`}
           >
             Play
@@ -476,7 +487,7 @@ export function SearchPage() {
                     </Button>
                   </div>
                 </div>
-                <div className="flex flex-col gap-2">{importedResults.map(renderResultRow)}</div>
+                <div className="flex flex-col gap-2">{importedResults.map((r) => renderResultRow(r, importedResults))}</div>
               </div>
             ) : null}
           </div>
@@ -647,7 +658,7 @@ export function SearchPage() {
           ) : results && results.length === 0 ? (
             <EmptyState title="No results" description="Try a different search term." />
           ) : (
-            <div className="flex flex-col gap-2">{(results ?? []).map(renderResultRow)}</div>
+            <div className="flex flex-col gap-2">{(results ?? []).map((r) => renderResultRow(r, results ?? []))}</div>
           )}
         </div>
       ) : null}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ListMusic, Search as SearchIcon } from 'lucide-react'
+import { Search as SearchIcon } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { subscribeRecentlyPlayed } from '@/services/historyService'
 import { subscribeFavorites } from '@/services/favoriteService'
@@ -8,6 +8,7 @@ import { subscribeOwnPlaylists } from '@/services/playlistService'
 import { subscribeLibrary } from '@/services/libraryService'
 import { getTracks } from '@/services/trackService'
 import { TrackCard } from '@/components/music/TrackCard'
+import { PlaylistCard } from '@/components/music/PlaylistCard'
 import { EmptyState, LoadingState } from '@/components/common/StateViews'
 import type { TrackDoc } from '@/types/track'
 import type { PlaylistDoc } from '@/types/playlist'
@@ -16,6 +17,14 @@ import type { SavedTrackDoc } from '@/types/savedTrack'
 function millis(ts: unknown): number {
   const t = ts as { toMillis?: () => number } | null
   return t?.toMillis ? t.toMillis() : 0
+}
+
+function timeOfDayGreeting(): string {
+  const hour = new Date().getHours()
+  if (hour < 5) return 'Good night'
+  if (hour < 12) return 'Good morning'
+  if (hour < 18) return 'Good afternoon'
+  return 'Good evening'
 }
 
 export function HomePage() {
@@ -101,9 +110,17 @@ export function HomePage() {
       <div className="border-b border-white/[0.08] pb-8 pt-2">
         <p className="eyebrow">Your music</p>
         <h1 className="mt-3 text-4xl font-medium tracking-[-0.045em] text-ink-0 sm:text-5xl">
-          {firstName ? `Good to have you back, ${firstName}.` : 'Good to have you back.'}
+          {timeOfDayGreeting()}
+          {firstName ? `, ${firstName}` : ''}.
         </h1>
-        <p className="mt-3 text-base text-ink-2">Everything you've saved, played and built — in one place.</p>
+        {!loading && !isEmpty ? (
+          <p className="mt-3 text-base text-ink-2">
+            {savedTracks?.length ?? 0} {savedTracks?.length === 1 ? 'song' : 'songs'} · {playlists?.length ?? 0}{' '}
+            {playlists?.length === 1 ? 'playlist' : 'playlists'}
+          </p>
+        ) : (
+          <p className="mt-3 text-base text-ink-2">Everything you've saved, played and built — in one place.</p>
+        )}
       </div>
 
       {loading ? (
@@ -175,19 +192,7 @@ function PlaylistRail({ playlists }: { playlists: PlaylistDoc[] }) {
       <h2 className="mb-5 text-xl font-medium tracking-[-0.025em] text-ink-0">Your playlists</h2>
       <div className="scrollbar-none flex gap-5 overflow-x-auto pb-5">
         {playlists.map((playlist) => (
-          <Link
-            key={playlist.playlistId}
-            to={`/app/playlists/${playlist.playlistId}`}
-            className="group w-44 shrink-0 sm:w-52"
-          >
-            <div className="grid aspect-square w-full place-items-center overflow-hidden rounded-[1.25rem] bg-surface-2 shadow-[0_18px_45px_rgba(0,0,0,.22)] ring-1 ring-white/[0.07] transition duration-500 group-hover:-translate-y-1 group-hover:shadow-[0_26px_65px_rgba(0,0,0,.4)]">
-              <ListMusic className="h-8 w-8 text-ink-3" />
-            </div>
-            <p className="mt-3 truncate text-[15px] font-semibold tracking-[-0.01em] text-ink-0">{playlist.title}</p>
-            <p className="mt-1 text-[13px] text-ink-2">
-              {playlist.trackIds.length} {playlist.trackIds.length === 1 ? 'track' : 'tracks'}
-            </p>
-          </Link>
+          <PlaylistCard key={playlist.playlistId} playlist={playlist} />
         ))}
       </div>
     </div>
