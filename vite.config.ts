@@ -2,11 +2,22 @@ import { fileURLToPath, URL } from 'node:url'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
+import { cloudflare } from '@cloudflare/vite-plugin'
 import { defineConfig } from 'vite'
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
+    // Without this, `wrangler deploy` treats the project as an unconfigured
+    // Vite app on every single build: it re-scaffolds its own wrangler.jsonc,
+    // reinstalls this same plugin, and rebuilds from scratch under its own
+    // control — and that scaffolded rebuild kept emitting a `_redirects` rule
+    // that tripped a Cloudflare platform bug (workers-sdk#10992/#11824:
+    // "Infinite loop detected" on the standard `/* /index.html 200` SPA
+    // fallback rule), failing every deploy. Declaring the plugin ourselves
+    // means wrangler sees the project as already configured and deploys the
+    // plain `npm run build` output directly instead.
+    cloudflare(),
     react(),
     tailwindcss(),
     VitePWA({
