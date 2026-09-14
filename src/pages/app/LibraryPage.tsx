@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { ChevronLeft, ListMusic } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useToast } from '@/contexts/ToastContext'
 import { subscribeFavorites } from '@/services/favoriteService'
@@ -41,7 +42,7 @@ function millis(ts: unknown): number {
 export function LibraryPage() {
   const { firebaseUser } = useAuth()
   const { notify } = useToast()
-  const { playLibrary, playLikedSongs } = usePlayer()
+  const { playLibrary, playLikedSongs, playPlaylist } = usePlayer()
   const [savedTracks, setSavedTracks] = useState<SavedTrackDoc[] | null>(null)
   const [favorites, setFavorites] = useState<FavoriteDoc[] | null>(null)
   const [playlists, setPlaylists] = useState<PlaylistDoc[] | null>(null)
@@ -50,6 +51,7 @@ export function LibraryPage() {
   const [tab, setTab] = useState<Tab>('all')
   const [sort, setSort] = useState<SortOrder>('recent-added')
   const [filter, setFilter] = useState('')
+  const [selectedArtistKey, setSelectedArtistKey] = useState<string | null>(null)
 
   useEffect(() => {
     if (!firebaseUser) return
@@ -144,6 +146,11 @@ export function LibraryPage() {
       .sort((a, b) => a.label.localeCompare(b.label))
   }, [allTracks])
 
+  const selectedArtist = useMemo(
+    () => (selectedArtistKey ? artistGroups.find((g) => g.key === selectedArtistKey) ?? null : null),
+    [artistGroups, selectedArtistKey],
+  )
+
   async function handleRemove(trackId: string) {
     if (!firebaseUser) return
     try {
@@ -188,7 +195,10 @@ export function LibraryPage() {
           {TABS.map((t) => (
             <button
               key={t.id}
-              onClick={() => setTab(t.id)}
+              onClick={() => {
+                setTab(t.id)
+                setSelectedArtistKey(null)
+              }}
               aria-current={tab === t.id ? 'page' : undefined}
               className={`rounded-full px-4 py-2 text-sm font-medium transition ${
                 tab === t.id ? 'bg-brand-500 text-[#080a05]' : 'bg-white/[0.05] text-ink-1 hover:bg-white/[0.09]'
@@ -235,19 +245,53 @@ export function LibraryPage() {
       {tab === 'artists' ? (
         artistGroups.length === 0 ? (
           <EmptyState title="No artists yet" description="Save some tracks to see them grouped by artist." />
-        ) : (
-          <div className="flex flex-col gap-10">
-            {artistGroups.map((group) => (
-              <div key={group.key}>
-                <h2 className="mb-4 text-lg font-medium text-ink-0">
-                  {group.label} <span className="text-sm font-normal text-ink-3">({group.tracks.length})</span>
-                </h2>
-                <div className="scrollbar-none flex gap-5 overflow-x-auto pb-2">
-                  {group.tracks.map((track) => (
-                    <TrackCard key={track.trackId} track={track} queue={group.tracks} />
-                  ))}
-                </div>
+        ) : selectedArtist ? (
+          <div className="flex flex-col gap-6">
+            <button
+              type="button"
+              onClick={() => setSelectedArtistKey(null)}
+              className="flex w-fit items-center gap-1 text-sm text-ink-3 hover:text-ink-1"
+            >
+              <ChevronLeft size={16} /> Artists
+            </button>
+            <div className="flex items-center gap-4">
+              <div className="h-20 w-20 shrink-0 overflow-hidden rounded-full bg-surface-2 ring-1 ring-white/[0.08]">
+                {selectedArtist.tracks[0]?.thumbnail ? (
+                  <img src={selectedArtist.tracks[0].thumbnail!} alt="" className="h-full w-full object-cover" />
+                ) : null}
               </div>
+              <div>
+                <h2 className="text-2xl font-medium tracking-[-0.025em] text-ink-0">{selectedArtist.label}</h2>
+                <p className="text-sm text-ink-3">
+                  {selectedArtist.tracks.length} {selectedArtist.tracks.length === 1 ? 'song' : 'songs'}
+                </p>
+              </div>
+            </div>
+            <TrackGrid tracks={selectedArtist.tracks} emptyLabel="No songs." onPlayAll={() => playPlaylist(selectedArtist.tracks)} />
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-x-4 gap-y-8 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+            {artistGroups.map((group) => (
+              <button
+                key={group.key}
+                type="button"
+                onClick={() => setSelectedArtistKey(group.key)}
+                className="group text-left"
+              >
+                <div className="aspect-square w-full overflow-hidden rounded-full bg-surface-2 shadow-[0_18px_45px_rgba(0,0,0,.22)] ring-1 ring-white/[0.07] transition duration-500 group-hover:-translate-y-1 group-hover:shadow-[0_26px_65px_rgba(0,0,0,.4)]">
+                  {group.tracks[0]?.thumbnail ? (
+                    <img src={group.tracks[0].thumbnail!} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-ink-3">
+                      <ListMusic className="h-8 w-8" />
+                    </div>
+                  )}
+                </div>
+                <p className="mt-3 truncate text-[15px] font-semibold tracking-[-0.01em] text-ink-0">{group.label}</p>
+                <p className="mt-1 text-[13px] text-ink-2">
+                  {group.tracks.length} {group.tracks.length === 1 ? 'song' : 'songs'}
+                </p>
+              </button>
             ))}
           </div>
         )
