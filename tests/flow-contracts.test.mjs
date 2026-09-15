@@ -508,6 +508,11 @@ test('extractArtistFromTitle/resolvedArtistName prefer the artist credited in a 
   assert.equal(extractArtistFromTitle('Lauryn Hill - Ex-Factor (Official Video)'), 'Lauryn Hill')
   assert.equal(extractArtistFromTitle('Doo Wop (That Thing)'), null)
   assert.equal(extractArtistFromTitle(''), null)
+  // Confirmed live: a title where the matched "-" is actually inside a parenthetical
+  // aside on the song title itself (no real artist prefix at all) used to extract
+  // garbage like "Something Else Remix (Bonus Track" as the "artist" — rejected via
+  // the unbalanced-parenthesis check instead of falling back to the channel name.
+  assert.equal(extractArtistFromTitle('Something Else Remix (Bonus Track - Album Version (Explicit))'), null)
 
   assert.equal(
     resolvedArtistName({ artist: 'nfltrackstarnydc', title: 'Lauryn Hill - Ex-Factor (Official Video)' }),

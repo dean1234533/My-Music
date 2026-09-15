@@ -83,7 +83,15 @@ export function extractArtistFromTitle(title: string): string | null {
   const match = title.match(/^([^-]{2,40}?)\s+-\s+.+/)
   if (!match) return null
   const candidate = match[1].trim()
-  return candidate || null
+  if (!candidate) return null
+  // An unbalanced opening parenthesis means the matched "-" was actually inside a
+  // parenthetical aside on the song title itself, not a genuine "Artist - Song"
+  // boundary — e.g. "Some Song (Bonus Track - Album Version)" would otherwise
+  // wrongly extract "Some Song (Bonus Track" as the "artist".
+  const openParens = (candidate.match(/\(/g) ?? []).length
+  const closeParens = (candidate.match(/\)/g) ?? []).length
+  if (openParens !== closeParens) return null
+  return candidate
 }
 
 /** The name to actually group/label a track's artist by — see extractArtistFromTitle
