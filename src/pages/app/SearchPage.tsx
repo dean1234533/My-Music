@@ -250,7 +250,9 @@ export function SearchPage() {
     try {
       const toAdd = importedResults.filter((r) => !savedTrackIds.has(r.youtubeVideoId))
       const tracks = await Promise.all(toAdd.map((r) => saveTrack(resultToSaveInput(r))))
-      await Promise.all(tracks.map((t) => saveToLibrary(firebaseUser.uid, t)))
+      // A whole playlist import is already a deliberately curated group — it should
+      // stay together, not get scattered across each track's own artist playlist.
+      await Promise.all(tracks.map((t) => saveToLibrary(firebaseUser.uid, t, { skipArtistPlaylist: true })))
       notify(
         toAdd.length === 0
           ? 'Every track from this playlist is already in your library.'
@@ -321,7 +323,9 @@ export function SearchPage() {
     setPasteActionBusy(true)
     try {
       const tracks = await Promise.all(matched.map((r) => saveTrack(resultToSaveInput(r))))
-      await Promise.all(tracks.map((t) => saveToLibrary(firebaseUser.uid, t)))
+      // Same reasoning as the playlist-import version above: a pasted batch is
+      // already a deliberate group and should stay together, not get split by artist.
+      await Promise.all(tracks.map((t) => saveToLibrary(firebaseUser.uid, t, { skipArtistPlaylist: true })))
       notify(`Added ${tracks.length} ${tracks.length === 1 ? 'track' : 'tracks'} to your library.`)
     } catch {
       notify('Could not add all tracks. Please try again.', 'error')

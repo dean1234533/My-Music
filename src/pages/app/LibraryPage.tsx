@@ -9,7 +9,7 @@ import { subscribeRecentlyPlayed } from '@/services/historyService'
 import { removeFromLibrary, subscribeLibrary } from '@/services/libraryService'
 import { getTracks } from '@/services/trackService'
 import { usePlayer } from '@/contexts/PlayerContext'
-import { stripArtistNoise } from '@/utils/artist'
+import { artistGroupKey, pickArtistLabel, stripArtistNoise } from '@/utils/artist'
 import { TrackCard } from '@/components/music/TrackCard'
 import { Input } from '@/components/common/Input'
 import { EmptyState, LoadingState } from '@/components/common/StateViews'
@@ -150,11 +150,8 @@ export function LibraryPage() {
   const artistGroups = useMemo(() => {
     const map = new Map<string, { tracks: TrackDoc[]; labelCandidates: string[] }>()
     for (const { track } of allTracks) {
+      const key = artistGroupKey(track.artist)
       const cleaned = stripArtistNoise(track.artist)
-      // Spaces removed too: "PotterPayperVEVO" strips down to "PotterPayper" (no
-      // space to restore, since the source channel name never had one), so the key
-      // has to ignore spacing entirely to still line up with plain "Potter Payper".
-      const key = cleaned.toLowerCase().replace(/\s+/g, '') || 'unknown'
       const existing = map.get(key)
       if (existing) {
         existing.tracks.push(track)
@@ -164,13 +161,7 @@ export function LibraryPage() {
       }
     }
     return [...map.entries()]
-      .map(([key, { tracks, labelCandidates }]) => {
-        // Prefer a candidate with real spacing (a plain name, or a "- Topic" strip,
-        // both of which keep the artist's original spacing) over a VEVO-derived one,
-        // which is a concatenated channel name with no space left to restore.
-        const label = labelCandidates.find((l) => l.includes(' ')) || labelCandidates[0] || 'Unknown artist'
-        return { key, label, tracks }
-      })
+      .map(([key, { tracks, labelCandidates }]) => ({ key, label: pickArtistLabel(labelCandidates), tracks }))
       .sort((a, b) => a.label.localeCompare(b.label))
   }, [allTracks])
 

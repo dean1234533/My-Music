@@ -10,7 +10,7 @@ import {
   youtubeThumbnailUrl,
 } from '../src/utils/youtube.ts'
 import { formatCount, formatDuration } from '../src/utils/format.ts'
-import { artistGroupKey, stripArtistNoise } from '../src/utils/artist.ts'
+import { artistGroupKey, pickArtistLabel, stripArtistNoise } from '../src/utils/artist.ts'
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
 
@@ -239,7 +239,7 @@ test('settingsService.getSettings merges DEFAULT_SETTINGS under a partial settin
 
 test('libraryService.saveToLibrary/removeFromLibrary/isInLibrary all key off the same owner-scoped doc ID as the rules expect', () => {
   const libraryService = read('src/services/libraryService.ts')
-  assert.match(libraryService, /export async function saveToLibrary\(uid: string, track: TrackDoc\)/)
+  assert.match(libraryService, /export async function saveToLibrary\(uid: string, track: TrackDoc, options\?: \{ skipArtistPlaylist\?: boolean \}\)/)
   assert.match(libraryService, /export async function removeFromLibrary\(uid: string, trackId: string\)/)
   assert.match(libraryService, /export async function isInLibrary\(uid: string, trackId: string\)/)
   assert.match(libraryService, /where\('uid', '==', uid\)/)
@@ -278,6 +278,29 @@ test('ensureArtistPlaylist targets a deterministic per-user-per-artist document 
   assert.match(playlistService, /autoArtistKey: key,/)
   // Adding a track already in the playlist must not duplicate it.
   assert.match(playlistService, /if \(!data\.trackIds\.includes\(track\.trackId\)\)/)
+})
+
+test('ensureArtistPlaylist self-heals a bad first-pick title once a plainer variant of the same artist is saved', () => {
+  const playlistService = read('src/services/playlistService.ts')
+  assert.match(
+    playlistService,
+    /if \(pickArtistLabel\(\[data\.title, candidateLabel\]\) === candidateLabel && candidateLabel !== data\.title\) \{/,
+  )
+})
+
+// ---------------------------------------------------------------------------
+// A whole playlist/paste-list import is already a deliberately curated group
+// of tracks — user-requested: it should land together as that one import
+// (via "Create playlist"), not get scattered across each track's own artist
+// playlist the way an ad-hoc single "add to library" from search should.
+// ---------------------------------------------------------------------------
+
+test('importing a playlist or a pasted list of songs skips per-track artist-playlist linking when adding to the library, unlike an ad-hoc single "add to library" from search', () => {
+  const searchPage = read('src/pages/app/SearchPage.tsx')
+  const importMatches = searchPage.match(/saveToLibrary\(firebaseUser\.uid, t, \{ skipArtistPlaylist: true \}\)/g) ?? []
+  assert.strictEqual(importMatches.length, 2, 'expected both handleImportAddAllToLibrary and handlePasteAddAllToLibrary to skip artist-playlist linking')
+  // The single-track "Add to library" action (from a search result row) must still link normally.
+  assert.match(searchPage, /await saveToLibrary\(firebaseUser\.uid, track\)\n/)
 })
 
 // ---------------------------------------------------------------------------
@@ -431,7 +454,41 @@ test('stripArtistNoise/artistGroupKey merge "Artist", "Artist - Topic" and "Arti
   assert.equal(artistGroupKey('MK'), artistGroupKey('MKVEVO'))
   // Genuinely different artists must not collapse into the same key.
   assert.notEqual(artistGroupKey('Stormzy'), artistGroupKey('Dappy'))
+})
+
+// ---------------------------------------------------------------------------
+// stripArtistNoise/artistGroupKey only caught Topic/VEVO — real accounts kept
+// splitting one artist across several playlists for other equally common
+// channel-naming conventions, confirmed live: "Michael Jackson" vs
+// "MichaelJackson80s" (decade tribute-channel suffix), "Ghetts" vs
+// "GhettsOfficial" (Official-channel suffix), "BlackSherif" vs "Black Sherif
+// Music" (Music-channel suffix), "Kiico" vs "KIICOTV" (TV-channel suffix),
+// "Dr. Dre" vs "DrDre" / "T.I." vs "TI" (punctuation), "Krept & Konan" vs
+// "KreptandKonan" (&), and "JayZ" vs "JAŸ-Z" (accented character).
+// ---------------------------------------------------------------------------
+
+test('artistGroupKey also merges decade/Official/Music/TV channel-suffix variants, punctuation differences, "&" vs "and", and accented characters', () => {
+  assert.equal(artistGroupKey('Michael Jackson'), artistGroupKey('MichaelJackson80s'))
+  assert.equal(artistGroupKey('Ghetts'), artistGroupKey('GhettsOfficial'))
+  assert.equal(artistGroupKey('BlackSherif'), artistGroupKey('Black Sherif Music'))
+  assert.equal(artistGroupKey('Kiico'), artistGroupKey('KIICOTV'))
+  assert.equal(artistGroupKey('Layyah'), artistGroupKey("Layyah's TV"))
+  assert.equal(artistGroupKey('Dr. Dre'), artistGroupKey('DrDre'))
+  assert.equal(artistGroupKey('T.I.'), artistGroupKey('TI'))
+  assert.equal(artistGroupKey('Krept & Konan'), artistGroupKey('KreptandKonan'))
+  assert.equal(artistGroupKey('JayZ'), artistGroupKey('JAŸ-Z'))
+  // Still must not over-merge two genuinely different real artists.
+  assert.notEqual(artistGroupKey('Nas'), artistGroupKey('Nasty C'))
+})
+
+test('pickArtistLabel prefers whichever candidate looks like a plain artist name over a channel-decorated one, so a merged playlist never gets stuck with an ugly title', () => {
+  assert.equal(pickArtistLabel(['GhettsOfficial', 'Ghetts']), 'Ghetts')
+  assert.equal(pickArtistLabel(['Ghetts', 'GhettsOfficial']), 'Ghetts')
+  assert.equal(pickArtistLabel(['MichaelJackson80s', 'Michael Jackson']), 'Michael Jackson')
+  // No pure candidate at all: falls back to whichever has a space, else the longest.
+  assert.equal(pickArtistLabel(['PotterPayperVEVO', 'PotterPayperOfficial']), 'PotterPayperOfficial')
 
   const libraryPage = read('src/pages/app/LibraryPage.tsx')
-  assert.match(libraryPage, /labelCandidates\.find\(\(l\) => l\.includes\(' '\)\)/)
+  assert.match(libraryPage, /label: pickArtistLabel\(labelCandidates\)/)
+  assert.match(libraryPage, /const key = artistGroupKey\(track\.artist\)/)
 })

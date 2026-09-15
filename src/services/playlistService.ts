@@ -15,7 +15,7 @@ import {
   where,
 } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
-import { artistGroupKey, stripArtistNoise } from '@/utils/artist'
+import { artistGroupKey, pickArtistLabel, stripArtistNoise } from '@/utils/artist'
 import type { PlaylistDoc } from '@/types/playlist'
 import type { TrackDoc } from '@/types/track'
 
@@ -106,13 +106,14 @@ function artistPlaylistId(uid: string, key: string): string {
 export async function ensureArtistPlaylist(uid: string, track: TrackDoc): Promise<void> {
   const key = artistGroupKey(track.artist)
   const ref = playlistRef(artistPlaylistId(uid, key))
+  const candidateLabel = stripArtistNoise(track.artist)
   await runTransaction(db, async (tx) => {
     const snap = await tx.get(ref)
     if (!snap.exists()) {
       tx.set(ref, {
         playlistId: ref.id,
         ownerId: uid,
-        title: stripArtistNoise(track.artist) || 'Unknown artist',
+        title: candidateLabel || 'Unknown artist',
         trackIds: [track.trackId],
         autoArtistKey: key,
         createdAt: serverTimestamp(),
@@ -121,8 +122,19 @@ export async function ensureArtistPlaylist(uid: string, track: TrackDoc): Promis
       return
     }
     const data = snap.data() as PlaylistDoc
+    const updates: Record<string, unknown> = {}
     if (!data.trackIds.includes(track.trackId)) {
-      tx.update(ref, { trackIds: arrayUnion(track.trackId), updatedAt: serverTimestamp() })
+      updates.trackIds = arrayUnion(track.trackId)
+    }
+    // Self-heals a bad first pick — the very first track ever saved for this artist
+    // might have come from a decorated channel name (e.g. "GhettsOfficial"), locking
+    // that in as the title. If a plainer variant (e.g. "Ghetts") shows up later,
+    // switch to it.
+    if (pickArtistLabel([data.title, candidateLabel]) === candidateLabel && candidateLabel !== data.title) {
+      updates.title = candidateLabel
+    }
+    if (Object.keys(updates).length > 0) {
+      tx.update(ref, { ...updates, updatedAt: serverTimestamp() })
     }
   })
 }

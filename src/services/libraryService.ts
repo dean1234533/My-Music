@@ -26,10 +26,18 @@ export async function isInLibrary(uid: string, trackId: string): Promise<boolean
  * library should always be reachable from its artist's playlist too; tracks
  * the user doesn't want are removed from there manually, the same as any
  * other playlist.
+ *
+ * `skipArtistPlaylist` opts out of that — a whole playlist/album import (or a
+ * pasted list) is already a deliberately curated group of tracks, and should
+ * land together as that one import, not get scattered across each track's
+ * own artist playlist. Callers importing a batch should create one playlist
+ * for it themselves (see playlistService.createPlaylist +
+ * addTrackToPlaylist) and pass this flag; ad-hoc single-track "add to
+ * library" from search still links to the artist playlist as normal.
  */
-export async function saveToLibrary(uid: string, track: TrackDoc): Promise<void> {
+export async function saveToLibrary(uid: string, track: TrackDoc, options?: { skipArtistPlaylist?: boolean }): Promise<void> {
   await setDoc(savedTrackRef(uid, track.trackId), { uid, trackId: track.trackId, addedAt: serverTimestamp() })
-  await ensureArtistPlaylist(uid, track)
+  if (!options?.skipArtistPlaylist) await ensureArtistPlaylist(uid, track)
 }
 
 /**
