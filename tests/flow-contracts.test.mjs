@@ -10,7 +10,7 @@ import {
   youtubeThumbnailUrl,
 } from '../src/utils/youtube.ts'
 import { formatCount, formatDuration } from '../src/utils/format.ts'
-import { artistGroupKey, pickArtistLabel, stripArtistNoise } from '../src/utils/artist.ts'
+import { artistGroupKey, extractArtistFromTitle, pickArtistLabel, resolvedArtistName, stripArtistNoise } from '../src/utils/artist.ts'
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
 
@@ -490,5 +490,38 @@ test('pickArtistLabel prefers whichever candidate looks like a plain artist name
 
   const libraryPage = read('src/pages/app/LibraryPage.tsx')
   assert.match(libraryPage, /label: pickArtistLabel\(labelCandidates\)/)
-  assert.match(libraryPage, /const key = artistGroupKey\(track\.artist\)/)
+  assert.match(libraryPage, /const key = artistGroupKey\(resolvedName\)/)
+})
+
+// ---------------------------------------------------------------------------
+// A track's uploading channel can be completely unrelated to who performs it —
+// a reposter, a radio show, a curator channel — so no amount of channel-name
+// cleanup can group it with that artist's own uploads. Confirmed live:
+// "Lauryn Hill - ..." uploaded by channels named "nfltrackstarnydc" and
+// "WeedHipHop" stayed split off from "Lauryn Hill - Topic" (the artist's own
+// channel) since the channel names share no text with "Lauryn Hill" at all.
+// resolvedArtistName prefers the artist credited in the video's own title
+// ("Artist - Song") over the channel name whenever that pattern is present.
+// ---------------------------------------------------------------------------
+
+test('extractArtistFromTitle/resolvedArtistName prefer the artist credited in a video\'s own title over an unrelated uploading channel name', () => {
+  assert.equal(extractArtistFromTitle('Lauryn Hill - Ex-Factor (Official Video)'), 'Lauryn Hill')
+  assert.equal(extractArtistFromTitle('Doo Wop (That Thing)'), null)
+  assert.equal(extractArtistFromTitle(''), null)
+
+  assert.equal(
+    resolvedArtistName({ artist: 'nfltrackstarnydc', title: 'Lauryn Hill - Ex-Factor (Official Video)' }),
+    'Lauryn Hill',
+  )
+  assert.equal(resolvedArtistName({ artist: 'Lauryn Hill - Topic', title: 'Doo Wop (That Thing)' }), 'Lauryn Hill - Topic')
+
+  // The two real upload paths for the same song now converge on one key.
+  assert.equal(
+    artistGroupKey(resolvedArtistName({ artist: 'nfltrackstarnydc', title: 'Lauryn Hill - Ex-Factor (Official Video)' })),
+    artistGroupKey(resolvedArtistName({ artist: 'Lauryn Hill - Topic', title: 'Doo Wop (That Thing)' })),
+  )
+
+  const playlistService = read('src/services/playlistService.ts')
+  assert.match(playlistService, /const resolvedName = resolvedArtistName\(track\)/)
+  assert.match(playlistService, /const key = artistGroupKey\(resolvedName\)/)
 })

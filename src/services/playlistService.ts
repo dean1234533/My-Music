@@ -15,7 +15,7 @@ import {
   where,
 } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
-import { artistGroupKey, pickArtistLabel, stripArtistNoise } from '@/utils/artist'
+import { artistGroupKey, pickArtistLabel, resolvedArtistName, stripArtistNoise } from '@/utils/artist'
 import type { PlaylistDoc } from '@/types/playlist'
 import type { TrackDoc } from '@/types/track'
 
@@ -104,9 +104,10 @@ function artistPlaylistId(uid: string, key: string): string {
  * normal playlist "remove" button — this only ever adds.
  */
 export async function ensureArtistPlaylist(uid: string, track: TrackDoc): Promise<void> {
-  const key = artistGroupKey(track.artist)
+  const resolvedName = resolvedArtistName(track)
+  const key = artistGroupKey(resolvedName)
   const ref = playlistRef(artistPlaylistId(uid, key))
-  const candidateLabel = stripArtistNoise(track.artist)
+  const candidateLabel = stripArtistNoise(resolvedName)
   await runTransaction(db, async (tx) => {
     const snap = await tx.get(ref)
     if (!snap.exists()) {

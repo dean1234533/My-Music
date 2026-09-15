@@ -9,7 +9,7 @@ import { subscribeRecentlyPlayed } from '@/services/historyService'
 import { removeFromLibrary, subscribeLibrary } from '@/services/libraryService'
 import { getTracks } from '@/services/trackService'
 import { usePlayer } from '@/contexts/PlayerContext'
-import { artistGroupKey, pickArtistLabel, stripArtistNoise } from '@/utils/artist'
+import { artistGroupKey, pickArtistLabel, resolvedArtistName, stripArtistNoise } from '@/utils/artist'
 import { TrackCard } from '@/components/music/TrackCard'
 import { Input } from '@/components/common/Input'
 import { EmptyState, LoadingState } from '@/components/common/StateViews'
@@ -150,8 +150,9 @@ export function LibraryPage() {
   const artistGroups = useMemo(() => {
     const map = new Map<string, { tracks: TrackDoc[]; labelCandidates: string[] }>()
     for (const { track } of allTracks) {
-      const key = artistGroupKey(track.artist)
-      const cleaned = stripArtistNoise(track.artist)
+      const resolvedName = resolvedArtistName(track)
+      const key = artistGroupKey(resolvedName)
+      const cleaned = stripArtistNoise(resolvedName)
       const existing = map.get(key)
       if (existing) {
         existing.tracks.push(track)
