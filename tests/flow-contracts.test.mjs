@@ -304,6 +304,23 @@ test('importing a playlist or a pasted list of songs skips per-track artist-play
 })
 
 // ---------------------------------------------------------------------------
+// "Add all to library" on an import used to only save tracks to the general
+// library, with no playlist ever created for the batch — skipping artist-
+// playlist linking (above) then left it with nowhere to show up as a group at
+// all (user-reported: "some of the albums that i imported are not showing").
+// It must now also create/populate a playlist for the whole import, same as
+// the separate "Create playlist" button already does.
+// ---------------------------------------------------------------------------
+
+test('"Add all to library" on a playlist import or a pasted list also creates a playlist for the whole batch, not just saves to the library', () => {
+  const searchPage = read('src/pages/app/SearchPage.tsx')
+  const createPlaylistCalls = searchPage.match(/const playlistId = await createPlaylist\(firebaseUser\.uid, title\)/g) ?? []
+  // One in handleImportAddAllToLibrary, one in handleImportCreatePlaylist, one in
+  // handlePasteAddAllToLibrary, one in handlePasteCreatePlaylist.
+  assert.strictEqual(createPlaylistCalls.length, 4)
+})
+
+// ---------------------------------------------------------------------------
 // The search page never calls the YouTube-backed searchYoutube() service for
 // a query already answered locally — libraryMatches is derived purely from
 // the client-held savedTracks/tracks state (useMemo over local state), and

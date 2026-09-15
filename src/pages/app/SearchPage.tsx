@@ -248,16 +248,24 @@ export function SearchPage() {
     if (!firebaseUser || !importedResults || bulkBusy) return
     setBulkBusy(true)
     try {
-      const toAdd = importedResults.filter((r) => !savedTrackIds.has(r.youtubeVideoId))
-      const tracks = await Promise.all(toAdd.map((r) => saveTrack(resultToSaveInput(r))))
+      const allTracks = await Promise.all(importedResults.map((r) => saveTrack(resultToSaveInput(r))))
+      const toAddIds = new Set(importedResults.filter((r) => !savedTrackIds.has(r.youtubeVideoId)).map((r) => r.youtubeVideoId))
+      const toAddTracks = allTracks.filter((t) => toAddIds.has(t.trackId))
       // A whole playlist import is already a deliberately curated group — it should
       // stay together, not get scattered across each track's own artist playlist.
-      await Promise.all(tracks.map((t) => saveToLibrary(firebaseUser.uid, t, { skipArtistPlaylist: true })))
+      await Promise.all(toAddTracks.map((t) => saveToLibrary(firebaseUser.uid, t, { skipArtistPlaylist: true })))
+      // "Stay together" also means the import needs an actual playlist to live in —
+      // saving to the library alone left it with nowhere to show up as a group
+      // (user-reported: "some of the albums that i imported are not showing").
+      const title = importedTitle?.trim() || 'Imported playlist'
+      const playlistId = await createPlaylist(firebaseUser.uid, title)
+      await reorderPlaylistTracks(playlistId, allTracks.map((t) => t.trackId))
       notify(
-        toAdd.length === 0
-          ? 'Every track from this playlist is already in your library.'
-          : `Added ${toAdd.length} ${toAdd.length === 1 ? 'track' : 'tracks'} to your library.`,
+        toAddTracks.length === 0
+          ? `Every track was already in your library — created “${title}” with all ${allTracks.length} tracks.`
+          : `Added ${toAddTracks.length} ${toAddTracks.length === 1 ? 'track' : 'tracks'} to your library and created “${title}”.`,
       )
+      navigate(`/app/playlists/${playlistId}`)
     } catch {
       notify('Could not add all tracks. Please try again.', 'error')
     } finally {
@@ -326,7 +334,14 @@ export function SearchPage() {
       // Same reasoning as the playlist-import version above: a pasted batch is
       // already a deliberate group and should stay together, not get split by artist.
       await Promise.all(tracks.map((t) => saveToLibrary(firebaseUser.uid, t, { skipArtistPlaylist: true })))
-      notify(`Added ${tracks.length} ${tracks.length === 1 ? 'track' : 'tracks'} to your library.`)
+      // "Stay together" also means the batch needs an actual playlist to live in —
+      // saving to the library alone left it with nowhere to show up as a group
+      // (user-reported: "some of the albums that i imported are not showing").
+      const title = pastePlaylistName.trim() || 'Imported playlist'
+      const playlistId = await createPlaylist(firebaseUser.uid, title)
+      await reorderPlaylistTracks(playlistId, tracks.map((t) => t.trackId))
+      notify(`Added ${tracks.length} ${tracks.length === 1 ? 'track' : 'tracks'} to your library and created “${title}”.`)
+      navigate(`/app/playlists/${playlistId}`)
     } catch {
       notify('Could not add all tracks. Please try again.', 'error')
     } finally {
