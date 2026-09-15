@@ -77,22 +77,6 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
-    // favorites/{uid}_{trackId} — owner-only, doc ID encodes ownership so a
-    // track can only ever be favorited once per user.
-    // ---------------------------------------------------------------------
-    match /favorites/{favoriteId} {
-      allow read, delete: if isOwner(resource.data.uid);
-      allow create: if isOwner(request.resource.data.uid)
-        && favoriteId == request.resource.data.uid + '_' + request.resource.data.trackId;
-      // The client re-favourites via setDoc() without merge — a full overwrite, which
-      // Firestore treats as an update (not a create) whenever the doc already exists.
-      // Allowed as a no-op re-save as long as ownership/identity fields never change.
-      allow update: if isOwner(resource.data.uid)
-        && request.resource.data.uid == resource.data.uid
-        && request.resource.data.trackId == resource.data.trackId;
-    }
-
-    // ---------------------------------------------------------------------
     // savedTracks/{uid}_{trackId} — a user's independent library, separate
     // from favorites/playlists (a track can be saved without being liked or
     // in any playlist). Same owner-encoded-doc-ID pattern as favorites, so

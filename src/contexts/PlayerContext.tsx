@@ -34,10 +34,8 @@ interface PlayerContextValue {
   /** Attach the mounted DOM node the official YouTube player renders into (owned by PlayerBar). */
   attachContainer: (el: HTMLDivElement | null) => void
   playTrack: (track: TrackDoc, queue?: TrackDoc[]) => void
-  /** Named wrappers around playTrack for call-site clarity — all three behave identically (play from the first track, queue the rest). */
+  /** Named wrapper around playTrack for call-site clarity — plays from the first track, queues the rest. */
   playPlaylist: (tracks: TrackDoc[]) => void
-  playLikedSongs: (tracks: TrackDoc[]) => void
-  playLibrary: (tracks: TrackDoc[]) => void
   playNext: (track: TrackDoc) => void
   /** Jumps to a track already in the queue/play order without resetting the queue. */
   playFromQueue: (trackId: string) => void
@@ -559,13 +557,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     playerRef.current?.playVideo()
   }, [loadAndPlay])
 
-  /** Plays a playlist/liked-songs/library list from its first track, queuing the rest. Thin, named wrappers around playTrack for call-site clarity. */
+  /** Plays a list from its first track, queuing the rest — a thin, named wrapper around playTrack for call-site clarity. */
   const playPlaylist = useCallback((tracks: TrackDoc[]) => {
     if (tracks.length === 0) return
     playTrack(tracks[0], tracks)
   }, [playTrack])
-  const playLikedSongs = playPlaylist
-  const playLibrary = playPlaylist
 
   const seek = useCallback((seconds: number) => {
     playerRef.current?.seekTo(seconds, true)
@@ -779,8 +775,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       attachContainer,
       playTrack,
       playPlaylist,
-      playLikedSongs,
-      playLibrary,
       playNext,
       playFromQueue,
       addToQueue,
@@ -814,8 +808,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       attachContainer,
       playTrack,
       playPlaylist,
-      playLikedSongs,
-      playLibrary,
       playNext,
       playFromQueue,
       addToQueue,

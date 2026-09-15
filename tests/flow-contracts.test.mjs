@@ -188,7 +188,7 @@ test('formatCount abbreviates thousands and millions', () => {
 // even if a client bug ever tried to create one.
 // ---------------------------------------------------------------------------
 
-test('trackService.saveTrack keys the Firestore doc by the video ID itself, and playlistService/favoriteService/historyService/settingsService only ever touch the calling user\'s own uid — reflected in firestore.rules, not re-tested here against a live Firestore', () => {
+test('trackService.saveTrack keys the Firestore doc by the video ID itself, and playlistService/historyService/settingsService only ever touch the calling user\'s own uid — reflected in firestore.rules, not re-tested here against a live Firestore', () => {
   const trackService = read('src/services/trackService.ts')
   assert.match(trackService, /function trackRef\(youtubeVideoId: string\) \{\s*return doc\(db, 'tracks', youtubeVideoId\)/)
   assert.match(trackService, /if \(existing\.exists\(\)\) \{/)
@@ -196,9 +196,6 @@ test('trackService.saveTrack keys the Firestore doc by the video ID itself, and 
 
   const playlistService = read('src/services/playlistService.ts')
   assert.match(playlistService, /where\('ownerId', '==', ownerId\)/)
-
-  const favoriteService = read('src/services/favoriteService.ts')
-  assert.match(favoriteService, /doc\(db, 'favorites', `\$\{uid\}_\$\{trackId\}`\)/)
 
   const historyService = read('src/services/historyService.ts')
   assert.match(historyService, /where\('uid', '==', uid\)/)
@@ -557,4 +554,40 @@ test('extractArtistFromTitle/resolvedArtistName prefer the artist credited in a 
   const playlistService = read('src/services/playlistService.ts')
   assert.match(playlistService, /const resolvedName = resolvedArtistName\(track\)/)
   assert.match(playlistService, /const key = artistGroupKey\(resolvedName\)/)
+})
+
+// ---------------------------------------------------------------------------
+// The Library page must always land on the artist-grouped view, never a flat
+// list of individual tracks (user-reported: "when i click library it load
+// single tracks when it should never do this. i want the app to show the
+// artist only") — there is no "All songs"/"Recently played" tab to default
+// away from, since those views no longer exist on this page at all (Home
+// already covers recently played/added). Also confirms the "like a track"
+// feature was fully removed, per the same request ("i dont need to like a
+// track as if i want it in a playlist i will just add tracks together
+// there") — no favorite/heart UI, service, or type left anywhere in the app.
+// ---------------------------------------------------------------------------
+
+test('LibraryPage always shows the artist-grouped view, with no flat "All songs" track list to land on first', () => {
+  const libraryPage = read('src/pages/app/LibraryPage.tsx')
+  assert.doesNotMatch(libraryPage, /type Tab =/)
+  assert.doesNotMatch(libraryPage, /'all'/)
+  assert.doesNotMatch(libraryPage, /subscribeFavorites/)
+  assert.match(libraryPage, /const artistGroups = useMemo/)
+  assert.match(libraryPage, /const \[selectedArtistKey, setSelectedArtistKey\] = useState<string \| null>\(null\)/)
+})
+
+test('the like/favorite feature was fully removed — no favorite service, type, UI, or Firestore rule remains', () => {
+  assert.throws(() => read('src/services/favoriteService.ts'))
+  assert.throws(() => read('src/types/favorite.ts'))
+
+  const trackActions = read('src/components/music/TrackActions.tsx')
+  assert.doesNotMatch(trackActions, /Heart/)
+  assert.doesNotMatch(trackActions, /favorite/i)
+
+  const homePage = read('src/pages/app/HomePage.tsx')
+  assert.doesNotMatch(homePage, /favorite/i)
+
+  const playerContext = read('src/contexts/PlayerContext.tsx')
+  assert.doesNotMatch(playerContext, /playLikedSongs/)
 })

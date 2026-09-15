@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom'
 import { Search as SearchIcon } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { subscribeRecentlyPlayed } from '@/services/historyService'
-import { subscribeFavorites } from '@/services/favoriteService'
 import { subscribeOwnPlaylists } from '@/services/playlistService'
 import { subscribeLibrary } from '@/services/libraryService'
 import { getTracks } from '@/services/trackService'
@@ -30,7 +29,6 @@ function timeOfDayGreeting(): string {
 export function HomePage() {
   const { firebaseUser, profile } = useAuth()
   const [recentlyPlayed, setRecentlyPlayed] = useState<TrackDoc[] | null>(null)
-  const [favorites, setFavorites] = useState<TrackDoc[] | null>(null)
   const [playlists, setPlaylists] = useState<PlaylistDoc[] | null>(null)
   const [savedTracks, setSavedTracks] = useState<SavedTrackDoc[] | null>(null)
   const [savedTrackMap, setSavedTrackMap] = useState<Map<string, TrackDoc>>(new Map())
@@ -40,15 +38,6 @@ export function HomePage() {
     return subscribeRecentlyPlayed(firebaseUser.uid, (history) => {
       void getTracks(history.map((h) => h.trackId)).then((byId) => {
         setRecentlyPlayed(history.map((h) => byId.get(h.trackId)).filter((t): t is TrackDoc => !!t))
-      })
-    })
-  }, [firebaseUser])
-
-  useEffect(() => {
-    if (!firebaseUser) return
-    return subscribeFavorites(firebaseUser.uid, (favs) => {
-      void getTracks(favs.map((f) => f.trackId)).then((byId) => {
-        setFavorites(favs.map((f) => byId.get(f.trackId)).filter((t): t is TrackDoc => !!t))
       })
     })
   }, [firebaseUser])
@@ -115,11 +104,11 @@ export function HomePage() {
       .slice(0, 20)
   }, [savedTracks, savedTrackMap])
 
-  const loading = recentlyPlayed === null || favorites === null || playlists === null || savedTracks === null
+  const loading = recentlyPlayed === null || playlists === null || savedTracks === null
   const firstName = profile?.displayName?.split(' ')[0]
   const isEmpty = loading
     ? false
-    : uniqueRecentlyPlayed.length === 0 && favorites.length === 0 && playlists.length === 0 && recentlyAdded.length === 0
+    : uniqueRecentlyPlayed.length === 0 && playlists.length === 0 && recentlyAdded.length === 0
 
   return (
     <div className="flex flex-col gap-12">
@@ -170,11 +159,6 @@ export function HomePage() {
             title="Recently added"
             tracks={recentlyAdded}
             emptyHint="Tracks you save will show up here."
-          />
-          <Rail
-            title="Liked songs"
-            tracks={favorites}
-            emptyHint="Songs you like will show up here."
           />
           <PlaylistRail playlists={playlists} />
         </>
