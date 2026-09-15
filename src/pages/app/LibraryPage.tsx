@@ -6,6 +6,7 @@ import { useToast } from '@/contexts/ToastContext'
 import { removeFromLibrary, subscribeLibrary } from '@/services/libraryService'
 import { getTracks } from '@/services/trackService'
 import { usePlayer } from '@/contexts/PlayerContext'
+import { scrollAppToTop } from '@/lib/scroll'
 import {
   artistGroupKey,
   findEstablishedArtistMatch,
@@ -35,6 +36,15 @@ export function LibraryPage() {
   const [trackMap, setTrackMap] = useState<Map<string, TrackDoc>>(new Map())
   const [filter, setFilter] = useState('')
   const [selectedArtistKey, setSelectedArtistKey] = useState<string | null>(null)
+
+  // Switching between the artist grid and a specific artist's track list is a same-route
+  // view swap, not a real navigation — AppShell's route-change scroll reset never fires for
+  // it. Left alone, whatever scroll position the grid was at carried straight into the new
+  // view, landing mid-page or, if the new content was shorter, clamped near the bottom of
+  // barely-there content — reading as "unable to scroll at all" (user-reported).
+  useEffect(() => {
+    scrollAppToTop()
+  }, [selectedArtistKey])
 
   useEffect(() => {
     if (!firebaseUser) return

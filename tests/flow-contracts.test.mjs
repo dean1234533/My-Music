@@ -710,7 +710,7 @@ test('the playlist detail page\'s action button row wraps instead of forcing hor
   assert.match(playlistDetail, /flex flex-wrap items-center gap-2/)
 
   const appShell = read('src/components/layout/AppShell.tsx')
-  assert.match(appShell, /<main\s*\n\s*className="w-full min-w-0 flex-1 overflow-x-hidden overflow-y-auto/)
+  assert.match(appShell, /className="w-full min-w-0 flex-1 overflow-x-hidden overflow-y-auto/)
 })
 
 // ---------------------------------------------------------------------------
@@ -760,4 +760,30 @@ test('the Playlists page has a filter input, matching the Library page\'s existi
 
   const libraryPage = read('src/pages/app/LibraryPage.tsx')
   assert.match(libraryPage, /placeholder="Filter artists…"/)
+})
+
+// ---------------------------------------------------------------------------
+// AppShell's <main> is the app's one scrollable content area, but React
+// Router doesn't reset its scroll position on navigation on its own — going
+// from a long scrolled-down page to a short one landed mid-page instead of
+// at the top. Library's artist grid -> a specific artist's track list is an
+// an even narrower case: same route, so the route-change reset never fires for
+// it at all — a stale scroll position could clamp near the bottom of the new,
+// often-shorter content, reading as "unable to scroll at all" (user-reported:
+// "when i click on a artist in library the page does not start at the top
+// and at times i am unable to scroll at all").
+// ---------------------------------------------------------------------------
+
+test('AppShell resets scroll to top on every route change, and LibraryPage does the same when switching between the artist grid and a specific artist (a same-route view swap the router never sees)', () => {
+  const scrollLib = read('src/lib/scroll.ts')
+  assert.match(scrollLib, /export function scrollAppToTop\(\)/)
+  assert.match(scrollLib, /document\.getElementById\('app-main'\)\?\.scrollTo\(\{ top: 0 \}\)/)
+
+  const appShell = read('src/components/layout/AppShell.tsx')
+  assert.match(appShell, /id="app-main"/)
+  assert.match(appShell, /const location = useLocation\(\)/)
+  assert.match(appShell, /useEffect\(\(\) => \{\s*scrollAppToTop\(\)\s*\}, \[location\.pathname\]\)/)
+
+  const libraryPage = read('src/pages/app/LibraryPage.tsx')
+  assert.match(libraryPage, /useEffect\(\(\) => \{\s*scrollAppToTop\(\)\s*\}, \[selectedArtistKey\]\)/)
 })
