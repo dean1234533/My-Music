@@ -712,3 +712,52 @@ test('the playlist detail page\'s action button row wraps instead of forcing hor
   const appShell = read('src/components/layout/AppShell.tsx')
   assert.match(appShell, /<main\s*\n\s*className="w-full min-w-0 flex-1 overflow-x-hidden overflow-y-auto/)
 })
+
+// ---------------------------------------------------------------------------
+// User-requested: move a track to another playlist, rename a track's display
+// title, drag-to-reorder instead of tap-per-swap, and filter both Playlists
+// and Library. The Library filter already existed; the rest were new.
+// ---------------------------------------------------------------------------
+
+test('renameTrack updates the shared tracks/{trackId} doc\'s title (visible everywhere that video appears), and the rule allows only a title-only or unavailable-only update', () => {
+  const trackService = read('src/services/trackService.ts')
+  assert.match(trackService, /export async function renameTrack\(trackId: string, title: string\): Promise<void> \{/)
+  assert.match(trackService, /await updateDoc\(trackRef\(trackId\), \{ title, updatedAt: serverTimestamp\(\) \}\)/)
+
+  const rules = read('firestore.rules')
+  assert.match(
+    rules,
+    /request\.resource\.data\.diff\(resource\.data\)\.affectedKeys\(\)\.hasOnly\(\['title', 'updatedAt'\]\)/,
+  )
+  assert.match(rules, /request\.resource\.data\.title is string/)
+})
+
+test('PlaylistPickerModal turns picking a different playlist into a real move (add to target, remove from current) when opened with currentPlaylistId, but stays purely additive without it', () => {
+  const modal = read('src/components/music/PlaylistPickerModal.tsx')
+  assert.match(modal, /currentPlaylistId\?: string/)
+  assert.match(modal, /const isMove = currentPlaylistId && currentPlaylistId !== playlist\.playlistId/)
+  assert.match(modal, /if \(isMove\) await removeTrackFromPlaylist\(currentPlaylistId, track\.trackId\)/)
+
+  const playlistDetail = read('src/pages/app/PlaylistDetailPage.tsx')
+  assert.match(
+    playlistDetail,
+    /<PlaylistPickerModal track=\{movingTrack\} currentPlaylistId=\{playlist\.playlistId\} onClose=/,
+  )
+})
+
+test('playlist tracks reorder via a pointer-based drag handle (touch-compatible) instead of one-tap-per-swap arrow buttons', () => {
+  const playlistDetail = read('src/pages/app/PlaylistDetailPage.tsx')
+  assert.doesNotMatch(playlistDetail, /ArrowUp|ArrowDown/)
+  assert.match(playlistDetail, /function handleDragPointerDown\(index: number, event: React\.PointerEvent<HTMLButtonElement>\)/)
+  assert.match(playlistDetail, /event\.currentTarget\.setPointerCapture\(event\.pointerId\)/)
+  assert.match(playlistDetail, /await reorderPlaylistTracks\(playlist\.playlistId, nextIds\)/)
+})
+
+test('the Playlists page has a filter input, matching the Library page\'s existing artist filter', () => {
+  const playlistsPage = read('src/pages/app/PlaylistsPage.tsx')
+  assert.match(playlistsPage, /placeholder="Filter playlists…"/)
+  assert.match(playlistsPage, /const filteredPlaylists = useMemo/)
+
+  const libraryPage = read('src/pages/app/LibraryPage.tsx')
+  assert.match(libraryPage, /placeholder="Filter artists…"/)
+})

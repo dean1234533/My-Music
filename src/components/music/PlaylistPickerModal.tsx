@@ -9,7 +9,23 @@ import { Input } from '@/components/common/Input'
 import type { PlaylistDoc } from '@/types/playlist'
 import type { TrackDoc } from '@/types/track'
 
-export function PlaylistPickerModal({ track, onClose }: { track: TrackDoc; onClose: () => void }) {
+/**
+ * `currentPlaylistId`, when passed (opened from inside a specific playlist),
+ * turns picking a *different* playlist into a real move: the track is added
+ * to the target and removed from the current one in the same action, instead
+ * of just being added to a second place. Opened without it (e.g. from a
+ * search result), it stays purely additive — nothing gets removed from
+ * anywhere just because the track happens to already live somewhere else.
+ */
+export function PlaylistPickerModal({
+  track,
+  currentPlaylistId,
+  onClose,
+}: {
+  track: TrackDoc
+  currentPlaylistId?: string
+  onClose: () => void
+}) {
   const { firebaseUser } = useAuth()
   const { notify } = useToast()
   const [playlists, setPlaylists] = useState<PlaylistDoc[] | null>(null)
@@ -37,7 +53,9 @@ export function PlaylistPickerModal({ track, onClose }: { track: TrackDoc; onClo
     setPendingId(playlist.playlistId)
     try {
       await addTrackToPlaylist(playlist.playlistId, track.trackId)
-      notify(`Added “${track.title}” to ${playlist.title}.`)
+      const isMove = currentPlaylistId && currentPlaylistId !== playlist.playlistId
+      if (isMove) await removeTrackFromPlaylist(currentPlaylistId, track.trackId)
+      notify(isMove ? `Moved “${track.title}” to ${playlist.title}.` : `Added “${track.title}” to ${playlist.title}.`)
       onClose()
     } catch {
       notify('Could not add this track. Please try again.', 'error')
@@ -53,7 +71,12 @@ export function PlaylistPickerModal({ track, onClose }: { track: TrackDoc; onClo
     try {
       const playlistId = await createPlaylist(firebaseUser.uid, title)
       await addTrackToPlaylist(playlistId, track.trackId)
-      notify(`Created ${title} and added “${track.title}”.`)
+      if (currentPlaylistId) await removeTrackFromPlaylist(currentPlaylistId, track.trackId)
+      notify(
+        currentPlaylistId
+          ? `Moved “${track.title}” to a new playlist, ${title}.`
+          : `Created ${title} and added “${track.title}”.`,
+      )
       onClose()
     } catch {
       notify('Could not create the playlist. Please try again.', 'error')
@@ -63,7 +86,7 @@ export function PlaylistPickerModal({ track, onClose }: { track: TrackDoc; onClo
   }
 
   return (
-    <Modal title="Add to playlist" onClose={onClose}>
+    <Modal title={currentPlaylistId ? 'Move to playlist' : 'Add to playlist'} onClose={onClose}>
       <div className="flex flex-col gap-5">
         <div className="flex items-center gap-3 rounded-xl border border-white/[0.08] bg-white/[0.025] p-3">
           <div className="h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-surface-3">
@@ -71,7 +94,7 @@ export function PlaylistPickerModal({ track, onClose }: { track: TrackDoc; onClo
           </div>
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-ink-0">{track.title}</p>
-            <p className="text-xs text-ink-3">Choose where to save this track</p>
+            <p className="text-xs text-ink-3">{currentPlaylistId ? 'Choose a playlist to move it to' : 'Choose where to save this track'}</p>
           </div>
         </div>
 

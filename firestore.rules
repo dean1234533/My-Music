@@ -58,11 +58,18 @@ service cloud.firestore {
         && request.resource.data.youtubeVideoId == resource.data.youtubeVideoId
         && request.resource.data.source == resource.data.source
         && request.resource.data.createdAt == resource.data.createdAt
-        && resource.data.get('unavailable', false) != true
-        // Every other field may change freely (refreshed title/thumbnail/
-        // duration/etc); only `unavailable` may ever flip, and only false -> true.
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['unavailable', 'updatedAt'])
-        && request.resource.data.unavailable == true;
+        && (
+          // Marking unavailable — one-way, false -> true only.
+          (resource.data.get('unavailable', false) != true
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['unavailable', 'updatedAt'])
+            && request.resource.data.unavailable == true)
+          ||
+          // Renaming the track's display title — a personal correction to a
+          // messy YouTube title, visible everywhere this shared track appears.
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'updatedAt'])
+            && request.resource.data.title is string
+            && request.resource.data.title.size() > 0)
+        );
 
       allow delete: if false;
     }

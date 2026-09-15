@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, Link } from 'react-router-dom'
-import { ArrowDown, ArrowUp, ListMusic, ListPlus, Pause, Play, Shuffle, Trash2, X } from 'lucide-react'
+import { FolderInput, GripVertical, ListMusic, ListPlus, Pause, Play, Shuffle, Trash2, X } from 'lucide-react'
 import {
   deletePlaylist,
   getPlaylist,
@@ -8,10 +8,11 @@ import {
   renamePlaylist,
   reorderPlaylistTracks,
 } from '@/services/playlistService'
-import { getTracks } from '@/services/trackService'
+import { getTracks, renameTrack } from '@/services/trackService'
 import { usePlayer } from '@/contexts/PlayerContext'
 import { Button } from '@/components/common/Button'
 import { Modal } from '@/components/common/Modal'
+import { PlaylistPickerModal } from '@/components/music/PlaylistPickerModal'
 import { EmptyState, LoadingState } from '@/components/common/StateViews'
 import { useToast } from '@/contexts/ToastContext'
 import { formatDuration } from '@/utils/format'
@@ -29,6 +30,11 @@ export function PlaylistDetailPage() {
   const [titleDraft, setTitleDraft] = useState('')
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [movingTrack, setMovingTrack] = useState<TrackDoc | null>(null)
+  const [editingTrackId, setEditingTrackId] = useState<string | null>(null)
+  const [trackTitleDraft, setTrackTitleDraft] = useState('')
+  const [dragIndex, setDragIndex] = useState<number | null>(null)
+  const rowRefs = useRef<(HTMLDivElement | null)[]>([])
 
   async function load() {
     if (!playlistId) return
@@ -76,14 +82,63 @@ export function PlaylistDetailPage() {
     }
   }
 
-  async function handleMove(index: number, direction: -1 | 1) {
-    if (!playlist) return
-    const nextIndex = index + direction
-    if (nextIndex < 0 || nextIndex >= tracks.length) return
-    const nextTracks = [...tracks]
-    ;[nextTracks[index], nextTracks[nextIndex]] = [nextTracks[nextIndex], nextTracks[index]]
-    setTracks(nextTracks)
-    const nextIds = nextTracks.map((t) => t.trackId)
+  async function handleRenameTrack(trackId: string) {
+    const title = trackTitleDraft.trim()
+    setEditingTrackId(null)
+    const previous = tracks.find((t) => t.trackId === trackId)
+    if (!title || !previous || title === previous.title) return
+    setTracks((prev) => prev.map((t) => (t.trackId === trackId ? { ...t, title } : t)))
+    try {
+      await renameTrack(trackId, title)
+    } catch {
+      notify('Could not rename that track.', 'error')
+      setTracks((prev) => prev.map((t) => (t.trackId === trackId ? { ...t, title: previous.title } : t)))
+    }
+  }
+
+  /**
+   * Drag-to-reorder via a dedicated handle, using pointer events (not native
+   * HTML5 drag-and-drop, which has no real touch support) — a long playlist
+   * (DMX alone has 87 tracks) is impractical to reorder one tap-to-swap-
+   * adjacent at a time, which is all the previous up/down-arrow buttons
+   * could do (user-requested: "should also be able to reorder tracks").
+   * Reorders the local list live as the pointer crosses each row's midpoint,
+   * then persists the final order once on release.
+   */
+  function handleDragPointerDown(index: number, event: React.PointerEvent<HTMLButtonElement>) {
+    event.preventDefault()
+    setDragIndex(index)
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  function handleDragPointerMove(event: React.PointerEvent<HTMLButtonElement>) {
+    if (dragIndex === null) return
+    const rows = rowRefs.current
+    let targetIndex = dragIndex
+    for (let i = 0; i < rows.length; i += 1) {
+      const rect = rows[i]?.getBoundingClientRect()
+      if (!rect) continue
+      if (event.clientY < rect.top + rect.height / 2) {
+        targetIndex = i
+        break
+      }
+      targetIndex = i
+    }
+    if (targetIndex !== dragIndex) {
+      setTracks((prev) => {
+        const next = [...prev]
+        const [moved] = next.splice(dragIndex, 1)
+        next.splice(targetIndex, 0, moved)
+        return next
+      })
+      setDragIndex(targetIndex)
+    }
+  }
+
+  async function handleDragPointerUp() {
+    if (dragIndex === null || !playlist) return
+    setDragIndex(null)
+    const nextIds = tracks.map((t) => t.trackId)
     setPlaylist({ ...playlist, trackIds: nextIds })
     try {
       await reorderPlaylistTracks(playlist.playlistId, nextIds)
@@ -204,8 +259,23 @@ export function PlaylistDetailPage() {
             return (
               <div
                 key={track.trackId}
-                className="flex items-center gap-3 rounded-xl px-2 py-2 hover:bg-white/[0.03]"
+                ref={(el) => {
+                  rowRefs.current[index] = el
+                }}
+                className={`flex items-center gap-2 rounded-xl px-2 py-2 hover:bg-white/[0.03] ${dragIndex === index ? 'bg-white/[0.06]' : ''}`}
               >
+                <button
+                  type="button"
+                  onPointerDown={(e) => handleDragPointerDown(index, e)}
+                  onPointerMove={handleDragPointerMove}
+                  onPointerUp={() => void handleDragPointerUp()}
+                  onPointerCancel={() => void handleDragPointerUp()}
+                  aria-label="Drag to reorder"
+                  title="Drag to reorder"
+                  className="grid h-8 w-6 shrink-0 cursor-grab touch-none place-items-center text-ink-3 hover:text-ink-0 active:cursor-grabbing"
+                >
+                  <GripVertical size={16} />
+                </button>
                 <button
                   type="button"
                   onClick={() => (isCurrent ? togglePlay() : playTrack(track, tracks))}
@@ -219,7 +289,30 @@ export function PlaylistDetailPage() {
                   {isCurrent && isPlaying ? <Pause size={14} className="absolute" /> : null}
                 </button>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-ink-0">{track.title}</p>
+                  {editingTrackId === track.trackId ? (
+                    <input
+                      autoFocus
+                      value={trackTitleDraft}
+                      onChange={(e) => setTrackTitleDraft(e.target.value)}
+                      onBlur={() => void handleRenameTrack(track.trackId)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') void handleRenameTrack(track.trackId)
+                        if (e.key === 'Escape') setEditingTrackId(null)
+                      }}
+                      className="w-full rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1 text-sm font-medium text-ink-0 outline-none"
+                    />
+                  ) : (
+                    <p
+                      className="cursor-text truncate text-sm font-medium text-ink-0"
+                      onClick={() => {
+                        setTrackTitleDraft(track.title)
+                        setEditingTrackId(track.trackId)
+                      }}
+                      title="Click to rename"
+                    >
+                      {track.title}
+                    </p>
+                  )}
                   <p className="truncate text-xs text-ink-3">{track.artist}</p>
                 </div>
                 {track.durationSeconds ? (
@@ -240,21 +333,12 @@ export function PlaylistDetailPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => void handleMove(index, -1)}
-                    disabled={index === 0}
-                    aria-label="Move up"
-                    className="grid h-8 w-8 place-items-center rounded-full text-ink-3 hover:bg-white/[0.06] hover:text-ink-0 disabled:opacity-30"
+                    onClick={() => setMovingTrack(track)}
+                    aria-label="Move to another playlist"
+                    title="Move to another playlist"
+                    className="grid h-8 w-8 place-items-center rounded-full text-ink-3 hover:bg-white/[0.06] hover:text-ink-0"
                   >
-                    <ArrowUp size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleMove(index, 1)}
-                    disabled={index === tracks.length - 1}
-                    aria-label="Move down"
-                    className="grid h-8 w-8 place-items-center rounded-full text-ink-3 hover:bg-white/[0.06] hover:text-ink-0 disabled:opacity-30"
-                  >
-                    <ArrowDown size={14} />
+                    <FolderInput size={14} />
                   </button>
                   <button
                     type="button"
@@ -270,6 +354,10 @@ export function PlaylistDetailPage() {
           })}
         </div>
       )}
+
+      {movingTrack ? (
+        <PlaylistPickerModal track={movingTrack} currentPlaylistId={playlist.playlistId} onClose={() => setMovingTrack(null)} />
+      ) : null}
     </div>
   )
 }

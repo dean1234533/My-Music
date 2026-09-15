@@ -7,9 +7,13 @@ const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8
 function blockFor(collectionPath) {
   const start = rules.indexOf(`match /${collectionPath}`)
   assert.notEqual(start, -1, `no rule block found for ${collectionPath}`)
-  // Grab a generous chunk after the match line — enough to cover the whole block
-  // without needing full brace-matching for these small, flat rule blocks.
-  return rules.slice(start, start + 1200)
+  // Slice up to wherever the next top-level `match /` block begins (or end of file) —
+  // a fixed-size chunk either cut a longer block short (tracks/{trackId} is over 1200
+  // chars) or, made bigger to compensate, bled into the *next* block and broke
+  // doesNotMatch assertions that legitimately match something later in the file.
+  const nextMatch = rules.indexOf('\n    match /', start + 1)
+  const end = nextMatch === -1 ? rules.length : nextMatch
+  return rules.slice(start, end)
 }
 
 test('a user can read/write their own playlists but not another user\'s', () => {

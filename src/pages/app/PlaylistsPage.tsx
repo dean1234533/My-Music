@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
@@ -19,6 +19,13 @@ export function PlaylistsPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [newTitle, setNewTitle] = useState('')
   const [creating, setCreating] = useState(false)
+  const [filter, setFilter] = useState('')
+
+  const filteredPlaylists = useMemo(() => {
+    const q = filter.trim().toLowerCase()
+    if (!q) return playlists ?? []
+    return (playlists ?? []).filter((p) => p.title.toLowerCase().includes(q))
+  }, [playlists, filter])
 
   useEffect(() => {
     if (!firebaseUser) return
@@ -47,11 +54,22 @@ export function PlaylistsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-medium tracking-[-0.025em] text-ink-0">Playlists</h1>
-        <Button onClick={() => setShowCreate(true)}>
-          <Plus size={16} /> New playlist
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {playlists && playlists.length > 0 ? (
+            <Input
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Filter playlists…"
+              className="w-full max-w-xs"
+              aria-label="Filter playlists"
+            />
+          ) : null}
+          <Button onClick={() => setShowCreate(true)}>
+            <Plus size={16} /> New playlist
+          </Button>
+        </div>
       </div>
 
       {playlists === null ? (
@@ -66,9 +84,11 @@ export function PlaylistsPage() {
             </Button>
           }
         />
+      ) : filteredPlaylists.length === 0 ? (
+        <EmptyState title="No matching playlists." />
       ) : (
         <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-          {playlists.map((playlist) => (
+          {filteredPlaylists.map((playlist) => (
             <PlaylistCard key={playlist.playlistId} playlist={playlist} fill />
           ))}
         </div>

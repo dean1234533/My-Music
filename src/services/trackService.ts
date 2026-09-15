@@ -86,3 +86,18 @@ export async function markTrackUnavailable(trackId: string): Promise<void> {
   const cached = trackCache.get(trackId)
   if (cached) trackCache.set(trackId, { ...cached, unavailable: true })
 }
+
+/**
+ * Renames a track's display title — a personal correction to a messy YouTube
+ * title (e.g. stripping "(Official Video) [4K Remaster]"), not a rename of
+ * the video itself. `tracks/{trackId}` is a shared cache keyed by video ID,
+ * so this is visible everywhere that video appears (every playlist, the
+ * library, search results already saved) — deliberately global rather than
+ * per-playlist, since a cleaned-up title is just as welcome everywhere else
+ * the track shows up.
+ */
+export async function renameTrack(trackId: string, title: string): Promise<void> {
+  await updateDoc(trackRef(trackId), { title, updatedAt: serverTimestamp() })
+  const cached = trackCache.get(trackId)
+  if (cached) trackCache.set(trackId, { ...cached, title })
+}
