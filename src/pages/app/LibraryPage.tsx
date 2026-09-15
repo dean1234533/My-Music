@@ -6,7 +6,7 @@ import { useToast } from '@/contexts/ToastContext'
 import { removeFromLibrary, subscribeLibrary } from '@/services/libraryService'
 import { getTracks } from '@/services/trackService'
 import { usePlayer } from '@/contexts/PlayerContext'
-import { artistGroupKey, pickArtistLabel, resolvedArtistName, stripArtistNoise } from '@/utils/artist'
+import { artistGroupKey, findEstablishedArtistMatch, pickArtistLabel, resolvedArtistName, stripArtistNoise } from '@/utils/artist'
 import { Input } from '@/components/common/Input'
 import { EmptyState, LoadingState } from '@/components/common/StateViews'
 import { TrackCard } from '@/components/music/TrackCard'
@@ -63,6 +63,25 @@ export function LibraryPage() {
       } else {
         map.set(key, { tracks: [track], labelCandidates: [cleaned] })
       }
+    }
+    // Second pass: a track can still be alone here because its title has no
+    // "Artist - Song" delimiter at all (e.g. "dmx ATF", "DMX Mickey" — no dash to
+    // signal it) — confirmed live, several DMX tracks sat as their own tiny groups
+    // this way. If a lone track's title contains, as one of its own dash/colon/
+    // pipe-delimited segments, the start of an artist who already has an
+    // established (2+ track) group, fold it in there instead.
+    const established = [...map.entries()]
+      .filter(([, g]) => g.tracks.length > 1)
+      .map(([key, g]) => ({ key, label: pickArtistLabel(g.labelCandidates) }))
+    for (const [key, group] of [...map.entries()]) {
+      if (group.tracks.length !== 1) continue
+      const match = findEstablishedArtistMatch(group.tracks[0].title, established.filter((g) => g.key !== key))
+      if (!match) continue
+      const target = map.get(match.key)
+      if (!target) continue
+      target.tracks.push(...group.tracks)
+      target.labelCandidates.push(...group.labelCandidates)
+      map.delete(key)
     }
     return [...map.entries()]
       .map(([key, { tracks, labelCandidates }]) => ({ key, label: pickArtistLabel(labelCandidates), tracks }))

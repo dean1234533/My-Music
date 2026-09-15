@@ -38,6 +38,7 @@ export function PlayerBar() {
   const [expanded, setExpanded] = useState(false)
   const miniSlotRef = useRef<HTMLDivElement | null>(null)
   const fullSlotRef = useRef<HTMLDivElement | null>(null)
+  const barRef = useRef<HTMLDivElement | null>(null)
   // The one real, live YouTube iframe is a single DOM node (see attachContainer/PlayerContext)
   // that's visually repositioned via these coordinates rather than ever being moved in the
   // React tree — moving it via React unmount/remount would destroy and recreate the iframe,
@@ -65,6 +66,26 @@ export function PlayerBar() {
     }
   }, [expanded, currentTrack])
 
+  // Exposes this bar's real rendered height as a CSS var so AppShell's scrollable
+  // content area can always reserve exactly enough space to clear it, no matter
+  // how tall this bar actually is on a given screen size — a fixed guessed value
+  // fell short in practice and left content clipped behind the bar (user-reported:
+  // "when the play bar is on the screen the screen does not show the content at
+  // the bottom of the page"). 0 while no track is loaded (the bar is display:none,
+  // so offsetHeight is already 0) means this costs nothing when nothing is playing.
+  useEffect(() => {
+    const el = barRef.current
+    if (!el) return
+    const update = () => document.documentElement.style.setProperty('--player-bar-height', `${el.offsetHeight}px`)
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(el)
+    return () => {
+      observer.disconnect()
+      document.documentElement.style.setProperty('--player-bar-height', '0px')
+    }
+  }, [currentTrack])
+
   return (
     <>
     {/* Always mounted (never conditionally removed) — the YouTube IFrame API needs this
@@ -82,6 +103,7 @@ export function PlayerBar() {
     </div>
     <div
       id="player-bar"
+      ref={barRef}
       className={clsx(
         // MobileNav is also fixed to the very bottom of the screen (below md), so this must
         // sit above it (bottom offset = MobileNav's own min-h-16) rather than overlapping it —

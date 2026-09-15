@@ -107,3 +107,35 @@ export function extractArtistFromTitle(title: string): string | null {
 export function resolvedArtistName(track: { artist: string; title: string }): string {
   return extractArtistFromTitle(track.title) ?? track.artist
 }
+
+/**
+ * A last-resort fallback for a track that's still alone in its own group after
+ * everything above — its title has no "Artist - Song" delimiter at all (so
+ * extractArtistFromTitle found nothing), e.g. "dmx ATF" or "DMX Mickey", both
+ * genuinely by DMX but with no dash to signal it. If the title's own dash/colon/
+ * pipe-delimited segments (or the title as a whole, when there are none) include
+ * one that *starts with* an artist who already has an established, larger group,
+ * it almost certainly belongs there too. Deliberately conservative: only a
+ * segment *start* counts, not "appears anywhere" — "Timbaland - Who Am I (feat.
+ * Twista)" must never fold into Twista's group just because Twista is mentioned;
+ * it's Timbaland's own track. Only called for singles, and only against groups
+ * that already have more than one track — a coincidental one-word overlap with
+ * another equally-unestablished single would be too weak a signal to act on.
+ */
+export function findEstablishedArtistMatch(
+  title: string,
+  establishedGroups: { key: string; label: string }[],
+): { key: string; label: string } | null {
+  const segments = title
+    .split(/\s*-\s*|\s*[:|]\s*/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  for (const group of establishedGroups) {
+    const labelKey = artistGroupKey(group.label)
+    if (labelKey.length < 3) continue
+    for (const segment of segments) {
+      if (artistGroupKey(segment).startsWith(labelKey)) return group
+    }
+  }
+  return null
+}

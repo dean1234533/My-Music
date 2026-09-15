@@ -10,7 +10,14 @@ import {
   youtubeThumbnailUrl,
 } from '../src/utils/youtube.ts'
 import { formatCount, formatDuration } from '../src/utils/format.ts'
-import { artistGroupKey, extractArtistFromTitle, pickArtistLabel, resolvedArtistName, stripArtistNoise } from '../src/utils/artist.ts'
+import {
+  artistGroupKey,
+  extractArtistFromTitle,
+  findEstablishedArtistMatch,
+  pickArtistLabel,
+  resolvedArtistName,
+  stripArtistNoise,
+} from '../src/utils/artist.ts'
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
 
@@ -590,4 +597,68 @@ test('the like/favorite feature was fully removed — no favorite service, type,
 
   const playerContext = read('src/contexts/PlayerContext.tsx')
   assert.doesNotMatch(playerContext, /playLikedSongs/)
+})
+
+// ---------------------------------------------------------------------------
+// Some tracks have no "Artist - Song" delimiter in their title at all (e.g.
+// "dmx ATF", "DMX Mickey" — genuinely by DMX, but nothing for
+// extractArtistFromTitle to find), so they kept sitting as their own
+// permanent one-track groups even with everything else in place. If such a
+// lone track's title contains, as one of its own dash/colon/pipe-delimited
+// segments, the start of an artist who already has an established (2+ track)
+// group, findEstablishedArtistMatch folds it in there — but conservatively:
+// a title with a clear OTHER primary artist plus an unrelated feature must
+// never be misattributed to the featured artist just because they're already
+// established (confirmed live: "Timbaland - Who Am I (feat. Twista)" and
+// "Fredo ft. Potter Payper - A Million Ways" must stay their own tracks, not
+// fold into Twista's or Potter Payper's much larger groups).
+// ---------------------------------------------------------------------------
+
+test('findEstablishedArtistMatch folds a delimiter-less title into an established artist\'s group, but never misattributes a track that already names a different primary artist', () => {
+  const establishedGroups = [
+    { key: 'dmx', label: 'DMX' },
+    { key: 'twista', label: 'Twista' },
+    { key: 'potterpayper', label: 'Potter Payper' },
+    { key: 'layyah', label: 'LAYYAH' },
+  ]
+
+  assert.deepEqual(findEstablishedArtistMatch('dmx ATF', establishedGroups), { key: 'dmx', label: 'DMX' })
+  assert.deepEqual(findEstablishedArtistMatch('DMX Mickey', establishedGroups), { key: 'dmx', label: 'DMX' })
+  assert.deepEqual(
+    findEstablishedArtistMatch('BBC @1xtra The Rap Game UK Winner - Layyah - Final Hour | @KennyAllstarTV', establishedGroups),
+    { key: 'layyah', label: 'LAYYAH' },
+  )
+
+  // A different primary artist merely featuring an established one must not be
+  // misattributed to the featured artist's (larger) group.
+  assert.equal(findEstablishedArtistMatch('Timbaland - Who Am I (feat. Twista)', establishedGroups), null)
+  assert.equal(
+    findEstablishedArtistMatch('Fredo ft. Potter Payper - A Million Ways (ft. Stormzy) Music Video', establishedGroups),
+    null,
+  )
+  assert.equal(findEstablishedArtistMatch('K Koke - No Favours ft. Potter Payper (Official Music Video)', establishedGroups), null)
+
+  const libraryPage = read('src/pages/app/LibraryPage.tsx')
+  assert.match(libraryPage, /const match = findEstablishedArtistMatch\(group\.tracks\[0\]\.title, established\.filter/)
+})
+
+// ---------------------------------------------------------------------------
+// A fixed guessed bottom-padding value fell short of the player bar's actual
+// rendered height on real devices, clipping content behind it (user-reported:
+// "when the play bar is on the screen the screen does not show the content
+// at the bottom of the page"). PlayerBar now measures its own real height via
+// ResizeObserver and exposes it as a CSS var so AppShell can always reserve
+// exactly enough space, regardless of how tall the bar actually renders.
+// ---------------------------------------------------------------------------
+
+test('PlayerBar measures its own real height into a CSS var, and AppShell reserves space using it instead of a fixed guessed value', () => {
+  const playerBar = read('src/components/player/PlayerBar.tsx')
+  assert.match(playerBar, /new ResizeObserver\(update\)/)
+  assert.match(
+    playerBar,
+    /document\.documentElement\.style\.setProperty\('--player-bar-height', `\$\{el\.offsetHeight\}px`\)/,
+  )
+
+  const appShell = read('src/components/layout/AppShell.tsx')
+  assert.match(appShell, /pb-\[calc\(var\(--player-bar-height,0px\)/)
 })
