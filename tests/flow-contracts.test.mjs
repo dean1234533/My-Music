@@ -14,6 +14,7 @@ import {
   artistGroupKey,
   extractArtistFromTitle,
   findEstablishedArtistMatch,
+  findWholeWordArtistMatch,
   pickArtistLabel,
   resolvedArtistName,
   stripArtistNoise,
@@ -639,7 +640,37 @@ test('findEstablishedArtistMatch folds a delimiter-less title into an establishe
   assert.equal(findEstablishedArtistMatch('K Koke - No Favours ft. Potter Payper (Official Music Video)', establishedGroups), null)
 
   const libraryPage = read('src/pages/app/LibraryPage.tsx')
-  assert.match(libraryPage, /const match = findEstablishedArtistMatch\(group\.tracks\[0\]\.title, established\.filter/)
+  assert.match(libraryPage, /findEstablishedArtistMatch\(group\.tracks\[0\]\.title, candidates\)/)
+})
+
+// ---------------------------------------------------------------------------
+// findEstablishedArtistMatch only looks at the *title* — it can't help when
+// the identifying signal is in the *channel* instead. Confirmed live: the
+// exact same song ("Good Times") sat under both "Styles" (channel
+// "Styles - Topic", no dash in the title "Good Times" for
+// extractArtistFromTitle to find) and the already-established "Styles P" —
+// "Styles" is a YouTube "Topic" channel auto-generated from a shortened tag
+// on that one upload. findWholeWordArtistMatch catches this by checking
+// whether an established artist's own first word exactly equals the lone
+// track's name, deliberately requiring a full-word match (not just a shared
+// prefix) so "Dav" never folds into "Dave" by coincidence.
+// ---------------------------------------------------------------------------
+
+test('findWholeWordArtistMatch folds a track whose own name is a shorter, exact first-word form of an established artist\'s full name, without matching on a mere shared prefix', () => {
+  const establishedGroups = [
+    { key: 'stylesp', label: 'Styles P' },
+    { key: 'dave', label: 'Dave' },
+  ]
+
+  assert.deepEqual(findWholeWordArtistMatch('Styles', establishedGroups), { key: 'stylesp', label: 'Styles P' })
+  // A shared prefix that isn't the established label's whole first word must not match.
+  assert.equal(findWholeWordArtistMatch('Dav', establishedGroups), null)
+  assert.equal(findWholeWordArtistMatch('Davey', establishedGroups), null)
+  // Too short to trust as a signal on its own.
+  assert.equal(findWholeWordArtistMatch('St', establishedGroups), null)
+
+  const libraryPage = read('src/pages/app/LibraryPage.tsx')
+  assert.match(libraryPage, /findWholeWordArtistMatch\(pickArtistLabel\(group\.labelCandidates\), candidates\)/)
 })
 
 // ---------------------------------------------------------------------------

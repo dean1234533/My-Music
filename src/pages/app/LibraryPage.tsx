@@ -6,7 +6,14 @@ import { useToast } from '@/contexts/ToastContext'
 import { removeFromLibrary, subscribeLibrary } from '@/services/libraryService'
 import { getTracks } from '@/services/trackService'
 import { usePlayer } from '@/contexts/PlayerContext'
-import { artistGroupKey, findEstablishedArtistMatch, pickArtistLabel, resolvedArtistName, stripArtistNoise } from '@/utils/artist'
+import {
+  artistGroupKey,
+  findEstablishedArtistMatch,
+  findWholeWordArtistMatch,
+  pickArtistLabel,
+  resolvedArtistName,
+  stripArtistNoise,
+} from '@/utils/artist'
 import { Input } from '@/components/common/Input'
 import { EmptyState, LoadingState } from '@/components/common/StateViews'
 import { TrackCard } from '@/components/music/TrackCard'
@@ -75,7 +82,13 @@ export function LibraryPage() {
       .map(([key, g]) => ({ key, label: pickArtistLabel(g.labelCandidates) }))
     for (const [key, group] of [...map.entries()]) {
       if (group.tracks.length !== 1) continue
-      const match = findEstablishedArtistMatch(group.tracks[0].title, established.filter((g) => g.key !== key))
+      const candidates = established.filter((g) => g.key !== key)
+      const match =
+        findEstablishedArtistMatch(group.tracks[0].title, candidates) ??
+        // A lone track's own name (usually from its channel) can itself be a shorter,
+        // genuine form of an established artist's full name — e.g. a "Topic" channel
+        // registered as plain "Styles" for a track really by "Styles P".
+        findWholeWordArtistMatch(pickArtistLabel(group.labelCandidates), candidates)
       if (!match) continue
       const target = map.get(match.key)
       if (!target) continue

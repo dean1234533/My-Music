@@ -139,3 +139,29 @@ export function findEstablishedArtistMatch(
   }
   return null
 }
+
+/**
+ * A second last-resort fallback — for when a lone track's own resolved artist
+ * name is itself a shorter, genuine form of an established artist's full
+ * name, most often because a YouTube "Topic" channel got auto-generated from
+ * a shortened tag on that one upload. Confirmed live: the exact same song
+ * ("Good Times") sat under both "Styles" (channel "Styles - Topic", no dash
+ * in the title for extractArtistFromTitle to find) and the already-
+ * established "Styles P". Deliberately narrow: the established label's own
+ * first word must *exactly equal* the single's name, not merely start with
+ * it — "Dav" must never fold into "Dave" just by sharing a prefix, and a
+ * short single name (under 3 characters) is never trusted at all, since a
+ * single word that short is too weak a signal on its own.
+ */
+export function findWholeWordArtistMatch(
+  singleName: string,
+  establishedGroups: { key: string; label: string }[],
+): { key: string; label: string } | null {
+  const singleKey = artistGroupKey(singleName)
+  if (singleKey.length < 3) return null
+  for (const group of establishedGroups) {
+    const firstWord = group.label.trim().split(/\s+/)[0] ?? ''
+    if (artistGroupKey(firstWord) === singleKey) return group
+  }
+  return null
+}
