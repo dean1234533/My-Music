@@ -82,7 +82,15 @@ export function pickArtistLabel(candidates: string[]): string {
 export function extractArtistFromTitle(title: string): string | null {
   const match = title.match(/^([^-]{2,40}?)\s+-\s+.+/)
   if (!match) return null
-  const candidate = match[1].trim()
+  let candidate = match[1].trim()
+  if (!candidate) return null
+  // A title crediting multiple collaborating artists ("Nines ft. Tiggs Da Author",
+  // "Wretch 32 x Avelino", "Uncle Murda, DUSTY LOCANE") should still group with the
+  // primary artist's other tracks, not become its own permanent one-off group —
+  // confirmed live, dozens of these sat as separate single-track playlists instead
+  // of folding into the featured primary artist. Only the portion before the first
+  // featuring/collaboration marker is kept.
+  candidate = candidate.split(/\s+(?:ft\.?|feat\.?|featuring|x)\s+|\s*[,&]\s*/i)[0].trim()
   if (!candidate) return null
   // An unbalanced opening parenthesis means the matched "-" was actually inside a
   // parenthetical aside on the song title itself, not a genuine "Artist - Song"

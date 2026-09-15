@@ -530,6 +530,17 @@ test('extractArtistFromTitle/resolvedArtistName prefer the artist credited in a 
   // garbage like "Something Else Remix (Bonus Track" as the "artist" — rejected via
   // the unbalanced-parenthesis check instead of falling back to the channel name.
   assert.equal(extractArtistFromTitle('Something Else Remix (Bonus Track - Album Version (Explicit))'), null)
+  // Confirmed live: a title crediting multiple collaborating artists used to become
+  // its own permanent one-off group instead of folding into the primary artist —
+  // "Uncle Murda, DUSTY LOCANE", "Nines ft. Tiggs Da Author", "Wretch 32 x Avelino",
+  // "Ghetts Ft. Giggs", and "STORMZY & RAYE" each sat as separate single-track
+  // playlists rather than joining that artist's other tracks.
+  assert.equal(extractArtistFromTitle('Uncle Murda, DUSTY LOCANE - Switching Sides (Official Visualizer)'), 'Uncle Murda')
+  assert.equal(extractArtistFromTitle('Nines ft. Tiggs Da Author - Gangster Holiday (Official Audio)'), 'Nines')
+  assert.equal(extractArtistFromTitle('Wretch 32 x Avelino - More Fire, More Flamez'), 'Wretch 32')
+  assert.equal(extractArtistFromTitle('Ghetts Ft. Giggs - Fire (Music Video)'), 'Ghetts')
+  assert.equal(extractArtistFromTitle('STORMZY & RAYE - Come Back Home'), 'STORMZY')
+  assert.equal(extractArtistFromTitle('Black Sherif, Fireboy DML - So it Goes (Official Video)'), 'Black Sherif')
 
   assert.equal(
     resolvedArtistName({ artist: 'nfltrackstarnydc', title: 'Lauryn Hill - Ex-Factor (Official Video)' }),
