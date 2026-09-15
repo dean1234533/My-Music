@@ -662,3 +662,22 @@ test('PlayerBar measures its own real height into a CSS var, and AppShell reserv
   const appShell = read('src/components/layout/AppShell.tsx')
   assert.match(appShell, /pb-\[calc\(var\(--player-bar-height,0px\)/)
 })
+
+// ---------------------------------------------------------------------------
+// The Play/Shuffle/Queue/Delete button row on the playlist detail page had no
+// flex-wrap, so on a narrow screen it forced the whole page to overflow and
+// pan sideways (user-reported: "the playlist page on mobile moves from left
+// to right") — visible across earlier screenshots as the delete button
+// always sitting clipped at the very edge of the screen. main also gets
+// overflow-x-hidden explicitly as a safety net, since overflow-y-auto alone
+// implicitly computes overflow-x as auto, letting the element pan sideways
+// on its own regardless of an ancestor's own overflow-x-hidden.
+// ---------------------------------------------------------------------------
+
+test('the playlist detail page\'s action button row wraps instead of forcing horizontal overflow, and the main content area has its own overflow-x-hidden as a safety net', () => {
+  const playlistDetail = read('src/pages/app/PlaylistDetailPage.tsx')
+  assert.match(playlistDetail, /flex flex-wrap items-center gap-2/)
+
+  const appShell = read('src/components/layout/AppShell.tsx')
+  assert.match(appShell, /<main\s*\n\s*className="w-full min-w-0 flex-1 overflow-x-hidden overflow-y-auto/)
+})
